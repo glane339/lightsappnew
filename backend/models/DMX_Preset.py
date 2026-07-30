@@ -1,7 +1,7 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import List, Optional
-from models.DMX_Device_Preset import DMX_Device_Preset
+from uuid import uuid4
 
 class DMX_Preset(BaseModel):
-    id: str
-    DMX_Device_Presets: List[DMX_Device_Preset]
+    id: str = Field(default_factory=lambda: uuid4().hex)
+    dmx_device_preset_ids: List[str] = []
