@@ -1,3 +1,4 @@
+platformdirs==4.11.0
 pydantic==2.13.4
 typing==3.7.4.3
 typing_extensions==4.16.0

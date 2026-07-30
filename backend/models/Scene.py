@@ -1,10 +1,9 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import List, Optional
-from models.Preset_List import Preset_List
-from models.ILDA_Frame_List import ILDA_Frame_List
+from uuid import uuid4
 
 class Scene(BaseModel):
-    id: str
-    Preset_List: Preset_List
-    ILDA_Frame_List: ILDA_Frame_List
+    id: str = Field(default_factory=lambda: uuid4().hex)
+    preset_list_id: str
+    ilda_frame_list_id: str
     Sensitivity: float
