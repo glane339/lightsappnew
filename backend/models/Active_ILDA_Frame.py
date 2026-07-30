@@ -3,5 +3,5 @@ from typing import List, Optional
 from uuid import uuid4
 
 class Active_ILDA_Frame(BaseModel):
-    id: str = Field(default_factory=lambda: uuid4().hex)
-    frame_id: str
+    """The one frame the ILDA sender reads. Empty until a scene is applied."""
+    frame_id: Optional[str] = None
