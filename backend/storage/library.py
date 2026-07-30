@@ -5,13 +5,12 @@ from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Type
 
 from pydantic import BaseModel, ValidationError
 
-from models.Active_DMX_Channels import Active_DMX_Channels
 from models.DMX_Device_Preset import DMX_Device_Preset
 from models.DMX_Preset import DMX_Preset
+from models.DMX_Preset_List import DMX_Preset_List
 from models.ILDA_Frame import ILDA_Frame
 from models.ILDA_Frame_List import ILDA_Frame_List
 from models.Preset import Preset
-from models.Preset_List import Preset_List
 from models.Scene import Scene
 from models.WLED_Preset import WLED_Preset
 from storage.config import AppConfig, ensure_config, save_config
@@ -26,25 +25,23 @@ from storage.json_store import StorageError, read_collection, write_collection
 from storage.migrations import SCHEMA_VERSION, migrate
 from storage.paths import collection_path, ensure_layout
 from storage.records import (
-    ACTIVE_DMX_CHANNELS,
     COLLECTION_ORDER,
     DMX_DEVICE_PRESETS,
+    DMX_PRESET_LISTS,
     DMX_PRESETS,
     ILDA_FRAME_LISTS,
     ILDA_FRAMES,
-    PRESET_LISTS,
     PRESETS,
     RECORD_TYPES,
     REFERENCES,
     ROOT_COLLECTIONS,
     SCENES,
     WLED_PRESETS,
-    ActiveDMXChannelsRecord,
     DMXDevicePresetRecord,
+    DMXPresetListRecord,
     DMXPresetRecord,
     ILDAFrameListRecord,
     ILDAFrameRecord,
-    PresetListRecord,
     PresetRecord,
     SceneRecord,
     WLEDPresetRecord,
@@ -61,14 +58,13 @@ class DanglingReferenceError(StorageError):
 
 MODEL_TYPES: Dict[str, Type[BaseModel]] = {
     SCENES: Scene,
-    PRESET_LISTS: Preset_List,
     PRESETS: Preset,
+    DMX_PRESET_LISTS: DMX_Preset_List,
     DMX_PRESETS: DMX_Preset,
     DMX_DEVICE_PRESETS: DMX_Device_Preset,
     WLED_PRESETS: WLED_Preset,
     ILDA_FRAME_LISTS: ILDA_Frame_List,
     ILDA_FRAMES: ILDA_Frame,
-    ACTIVE_DMX_CHANNELS: Active_DMX_Channels,
 }
 
 COLLECTION_BY_TYPE: Dict[Type[BaseModel], str] = {model: name for name, model in MODEL_TYPES.items()}
@@ -97,26 +93,24 @@ class Library:
         self.config: AppConfig = ensure_config(self.root)
 
         self.scenes: Dict[str, Scene] = {}
-        self.preset_lists: Dict[str, Preset_List] = {}
         self.presets: Dict[str, Preset] = {}
+        self.dmx_preset_lists: Dict[str, DMX_Preset_List] = {}
         self.dmx_presets: Dict[str, DMX_Preset] = {}
         self.dmx_device_presets: Dict[str, DMX_Device_Preset] = {}
         self.wled_presets: Dict[str, WLED_Preset] = {}
         self.ilda_frame_lists: Dict[str, ILDA_Frame_List] = {}
         self.ilda_frames: Dict[str, ILDA_Frame] = {}
-        self.active_dmx_channels: Dict[str, Active_DMX_Channels] = {}
         self.ilda_sync: Dict[str, List[str]] = {}
 
         self._maps: Dict[str, Dict[str, Any]] = {
             SCENES: self.scenes,
-            PRESET_LISTS: self.preset_lists,
             PRESETS: self.presets,
+            DMX_PRESET_LISTS: self.dmx_preset_lists,
             DMX_PRESETS: self.dmx_presets,
             DMX_DEVICE_PRESETS: self.dmx_device_presets,
             WLED_PRESETS: self.wled_presets,
             ILDA_FRAME_LISTS: self.ilda_frame_lists,
             ILDA_FRAMES: self.ilda_frames,
-            ACTIVE_DMX_CHANNELS: self.active_dmx_channels,
         }
 
     @classmethod
@@ -145,18 +139,18 @@ class Library:
         if collection == SCENES:
             return Scene(
                 id=record.id,
-                preset_list_id=record.preset_list_id,
+                preset_id=record.preset_id,
                 ilda_frame_list_id=record.ilda_frame_list_id,
-                Sensitivity=record.sensitivity,
+                sensitivity=record.sensitivity,
             )
-        if collection == PRESET_LISTS:
-            return Preset_List(id=record.id, preset_ids=list(record.preset_ids))
         if collection == PRESETS:
             return Preset(
                 id=record.id,
-                dmx_preset_id=record.dmx_preset_id,
+                dmx_preset_list_id=record.dmx_preset_list_id,
                 wled_preset_id=record.wled_preset_id,
             )
+        if collection == DMX_PRESET_LISTS:
+            return DMX_Preset_List(id=record.id, dmx_preset_ids=list(record.dmx_preset_ids))
         if collection == DMX_PRESETS:
             return DMX_Preset(
                 id=record.id, dmx_device_preset_ids=list(record.dmx_device_preset_ids)
@@ -174,8 +168,6 @@ class Library:
             return ILDA_Frame_List(id=record.id, ilda_frame_ids=list(record.ilda_frame_ids))
         if collection == ILDA_FRAMES:
             return ILDA_Frame(id=record.id)
-        if collection == ACTIVE_DMX_CHANNELS:
-            return Active_DMX_Channels(id=record.id, channels=list(record.channels))
         raise StorageError(f"unknown collection '{collection}'")
 
     def _read_records(self, collection: str) -> Dict[str, Any]:
@@ -228,16 +220,18 @@ class Library:
         if collection == SCENES:
             return SceneRecord(
                 id=obj.id,
-                preset_list_id=obj.preset_list_id,
+                preset_id=obj.preset_id,
                 ilda_frame_list_id=obj.ilda_frame_list_id,
-                sensitivity=obj.Sensitivity,
+                sensitivity=obj.sensitivity,
             )
-        if collection == PRESET_LISTS:
-            return PresetListRecord(id=obj.id, preset_ids=list(obj.preset_ids))
         if collection == PRESETS:
             return PresetRecord(
-                id=obj.id, dmx_preset_id=obj.dmx_preset_id, wled_preset_id=obj.wled_preset_id
+                id=obj.id,
+                dmx_preset_list_id=obj.dmx_preset_list_id,
+                wled_preset_id=obj.wled_preset_id,
             )
+        if collection == DMX_PRESET_LISTS:
+            return DMXPresetListRecord(id=obj.id, dmx_preset_ids=list(obj.dmx_preset_ids))
         if collection == DMX_PRESETS:
             return DMXPresetRecord(
                 id=obj.id, dmx_device_preset_ids=list(obj.dmx_device_preset_ids)
@@ -255,8 +249,6 @@ class Library:
             return ILDAFrameListRecord(id=obj.id, ilda_frame_ids=list(obj.ilda_frame_ids))
         if collection == ILDA_FRAMES:
             return ILDAFrameRecord(id=obj.id)
-        if collection == ACTIVE_DMX_CHANNELS:
-            return ActiveDMXChannelsRecord(id=obj.id, channels=list(obj.channels))
         raise StorageError(f"unknown collection '{collection}'")
 
     # ------------------------------------------------------------------ CRUD
@@ -265,8 +257,8 @@ class Library:
         """
         Register an object, after checking that everything it names is already here.
 
-        Nothing cascades any more, so build from the leaves up: a Preset has to be added
-        before the Preset_List that lists its id.
+        Nothing cascades any more, so build from the leaves up: a DMX_Preset has to be added
+        before the DMX_Preset_List that lists its id.
         """
         collection = COLLECTION_BY_TYPE.get(type(obj))
         if collection is None:
