@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from conftest import build_minimal_scene_graph
+from conftest import build_cycling_scene_graph, build_minimal_scene_graph
 from models.DMX_Device_Preset import DMX_Device_Preset
 from models.Preset import Preset
 from models.WLED_Preset import WLED_Preset
@@ -12,6 +12,7 @@ from storage.library import DanglingReferenceError, IntegrityError, Library
 from storage.records import (
     DMX_DEVICE_PRESETS,
     DMX_PRESETS,
+    ILDA_FRAME_LISTS,
     PRESETS,
     SCENES,
     WLED_PRESET_LISTS,
@@ -34,6 +35,9 @@ def test_round_trip_preserves_graph(data_root: Path) -> None:
     assert wled_list.wled_preset_ids == ["scene-alpha"]
     assert reloaded.contains(WLED_PRESETS, "scene-alpha")
     assert len(reloaded.dmx_device_presets) == 1
+    # Beat counts are configuration and have to survive the round trip.
+    assert wled_list.beats == 4
+    assert reloaded.dmx_preset_lists[preset.dmx_preset_list_id].beats == 2
 
 
 def test_add_rejects_dangling_reference(library: Library) -> None:
@@ -136,3 +140,39 @@ def test_wled_preset_list_is_storable(library: Library) -> None:
     wled_list = WLED_Preset_List(wled_preset_ids=["only"], beats=4)
     library.add(wled_list)
     assert library.contains(WLED_PRESET_LISTS, wled_list.id)
+
+
+def test_a_scene_needs_no_ilda_frame_list(library: Library) -> None:
+    scene = build_cycling_scene_graph(library)
+
+    loaded = library.get(SCENES, scene.scene_id)
+    assert loaded.ilda_frame_list_id is None
+    library.check_integrity()
+
+
+def test_deleting_an_ilda_list_detaches_it_instead_of_killing_the_scene(
+    library: Library,
+) -> None:
+    scene = build_minimal_scene_graph(library)
+    frame_list_id = library.get(SCENES, scene.id).ilda_frame_list_id
+    assert frame_list_id is not None
+
+    deleted = library.delete(ILDA_FRAME_LISTS, frame_list_id, force=True)
+
+    # An optional reference is nulled out; only a required parent goes down with its child.
+    assert (ILDA_FRAME_LISTS, frame_list_id) in deleted
+    assert (SCENES, scene.id) not in deleted
+    assert scene.id in library.scenes
+    assert library.get(SCENES, scene.id).ilda_frame_list_id is None
+    library.check_integrity()
+
+
+def test_a_required_reference_still_cascades(library: Library) -> None:
+    scene = build_minimal_scene_graph(library)
+    preset_id = scene.preset_id
+
+    deleted = library.delete(PRESETS, preset_id, force=True)
+
+    # Scene.preset_id is required, so the scene cannot survive losing it.
+    assert (SCENES, scene.id) in deleted
+    assert scene.id not in library.scenes

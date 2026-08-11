@@ -12,7 +12,7 @@ Follow-up.
 | --- | --- | --- |
 | [D-001](#d-001-scene-is-the-top-level-manually-selected-unit) | Scene is the top-level manually selected unit | Accepted |
 | [D-002](#d-002-audio-processing-owns-timing-not-lighting-decisions) | Audio processing owns timing, not lighting decisions | Proposed |
-| [D-003](#d-003-dmx-and-wled-share-one-beat-sequencing-implementation) | DMX and WLED share one beat-sequencing implementation | Proposed |
+| [D-003](#d-003-dmx-and-wled-share-one-beat-sequencing-implementation) | DMX and WLED share one beat-sequencing implementation | Accepted |
 | [D-004](#d-004-ledfx-owns-wled-output) | LEDfx owns WLED output | Accepted |
 | [D-005](#d-005-transient-runtime-state-is-never-persisted) | Transient runtime state is never persisted | Accepted |
 | [D-006](#d-006-stable-definitions-persist-as-normalized-json-collections) | Stable definitions persist as normalized JSON collections | Accepted |
@@ -20,7 +20,7 @@ Follow-up.
 | [D-008](#d-008-ilda-stays-behind-a-separate-processor-boundary) | ILDA stays behind a separate processor boundary | Accepted |
 | [D-009](#d-009-basement-deployment-is-the-immediate-target) | Basement deployment is the immediate target | Accepted |
 | [D-010](#d-010-basement-reliability-outranks-generality) | Basement reliability outranks generality | Proposed |
-| [D-011](#d-011-hold-between-scenes-blackout-on-clean-shutdown) | Hold between scenes, blackout on clean shutdown | Proposed |
+| [D-011](#d-011-hold-between-scenes-blackout-on-clean-shutdown) | Hold between scenes, blackout on clean shutdown | Accepted |
 | [D-012](#d-012-network-failures-must-not-reach-persistent-state) | Network failures must not reach persistent state | Proposed |
 | [D-013](#d-013-hardware-output-defaults-to-a-null-implementation) | Hardware output defaults to a null implementation | Proposed |
 | [D-014](#d-014-fixtures-become-first-class-persisted-objects) | Fixtures become first-class persisted objects | Proposed |
@@ -33,8 +33,8 @@ Follow-up.
 
 ## D-001: Scene is the top-level manually selected unit
 
-**Status:** Accepted — supplied project requirement, partially represented by the
-data model; scene activation is not implemented.
+**Status:** Accepted and implemented — `SceneController.activate()` is the sole entry
+point. No UI calls it yet.
 
 **Context.** Something has to be the unit an operator picks. `Scene` sits at the top
 of the reference graph: it is a `ROOT_COLLECTION`
@@ -88,7 +88,8 @@ duplicates what LEDfx already does well for LED strips).
 
 ## D-003: DMX and WLED share one beat-sequencing implementation
 
-**Status:** Proposed — no sequencer exists.
+**Status:** **Accepted and implemented** —
+[`runtime/sequencer.py`](../backend/runtime/sequencer.py).
 
 **Context.** Both cue lists advance on beats, hold entries for a configured number of
 beats, and loop. The obvious shortcut is to implement counting inside each output
@@ -98,11 +99,16 @@ controller.
 loop-behaviour changes get applied to one and not the other, and the two paths then
 behave differently in ways that are very hard to diagnose during a show.
 
-**Consequences.** One `BeatSequencer` class, instantiated once per cue list, with no
-knowledge of its consumer — it emits "cue changed" and nothing more. Requires the
-two cue lists to have the *same entry shape*, which is why the beat-field fix
-([AF-H02](audit_findings.md#af-h02)) must be applied to DMX and WLED together. It is
-fully unit-testable with no I/O and is the highest-value test suite in the project.
+**Consequences.** One `CueSequencer` class, instantiated once per cue list, with no
+knowledge of its consumer — it reports the new cue id and nothing more. This required
+the two cue lists to have the *same entry shape*, so `beats` was added to
+`DMX_Preset_List` and normalised on `WLED_Preset_List` in one change
+([AF-H02](audit_findings.md#af-h02)). It is fully unit-testable with no I/O, and the
+resulting suite is the highest-value one in the project.
+
+**Confirmed in practice.** Sharing the class cost nothing: the two outputs differ in
+what `apply()` does, not in when it is called, so the sequencer never needed to know
+which it was feeding.
 
 **Alternatives.** Per-controller counting (rejected as above); a global tick that
 both consult (rejected: makes independent cue-list lengths awkward).
@@ -296,7 +302,7 @@ hurt. Generalise only when a second real requirement appears.
 
 ## D-011: Hold between scenes, blackout on clean shutdown
 
-**Status:** Proposed — no evidence in the repository either way.
+**Status:** **Accepted**; the hold half is implemented, the blackout half is not.
 
 **Context.** When a scene is deactivated, the DMX universe buffer either keeps its
 values or is zeroed.
@@ -305,11 +311,13 @@ values or is zeroed.
 what an operator wants mid-show. Blacking out on clean exit avoids leaving the rig
 lit with nothing controlling it.
 
-**Consequences.** Deactivation is cheap; the sender keeps transmitting the last look
-until the next scene loads. Shutdown must explicitly write zeros and send one final
-frame *before* closing the socket. LEDfx needs an equivalent explicit action
-([wled_ledfx_architecture.md](wled_ledfx_architecture.md#64-shutdown)) since it keeps
-rendering regardless.
+**Consequences.** Deactivation is cheap: `SceneController.deactivate()` drops both
+sequencers and touches no output, so the buffer keeps the last look. `DmxOutput.blackout()`
+exists for shutdown but nothing calls it — there is no process lifecycle to hang it off,
+and no sender for a final frame to leave through. When there is, shutdown must write
+zeros and send one final frame *before* closing the socket. LEDfx needs an equivalent
+explicit action ([wled_ledfx_architecture.md](wled_ledfx_architecture.md#64-shutdown))
+since it keeps rendering regardless.
 
 **Alternatives.** Blackout on every deactivation (rejected: visible gap); hold
 always, including on exit (rejected: rig stays lit after the app closes).

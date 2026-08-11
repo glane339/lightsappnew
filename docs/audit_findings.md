@@ -8,8 +8,10 @@ README, AGENTS.md, and `requirements.txt` at commit `691062e`.
 > `Preset.wled_preset_list_id`; `WLED_Preset.id` = scene name), **AF-H05** (32-test
 > storage suite), **AF-M07** (config split documented), **AF-M08** (logging),
 > **AF-L02** (requirements cleaned), **AF-H01** (`DMX_Device` collection and
-> address-based resolution). **AF-H02** (per-entry beats) remains open, as does
-> multi-universe output. WS-3/4 are parked pending show-control redesign.
+> address-based resolution). **AF-H02** is now partly resolved: cue lists carry a beat
+> count per list, which unblocked sequencing; per-*entry* beats remain open. **AF-M02**
+> and **AF-M06** are resolved, **AF-M05** partly. Multi-universe output remains open, as
+> does WS-4 (E1.31 transport). WS-3 is unparked and built.
 
 Severity reflects impact **on this project at its current stage** — a pre-runtime
 repository with no deployment, no users, and no hardware output. Nothing here is
@@ -20,15 +22,15 @@ three findings that actually matter.
 | ID | Severity | Finding | Blocks now? |
 | --- | --- | --- | --- |
 | [AF-H01](#af-h01) | High | No fixture identity; DMX addresses derived positionally | ~~Yes~~ **Resolved** |
-| [AF-H02](#af-h02) | High | Beat duration is absent from the persisted model | **Yes** |
+| [AF-H02](#af-h02) | High | Beat duration is absent from the persisted model | ~~Yes~~ **Partly resolved** |
 | [AF-H03](#af-h03) | High | `WLED_Preset_List` unreachable; `WLED_Preset` carries no LEDfx id | ~~Yes~~ **Resolved** |
 | [AF-H04](#af-h04) | High | Force-delete cascade can silently destroy Scenes and user files | No |
 | [AF-H05](#af-h05) | High | No tests of any kind | ~~Yes~~ **Resolved** (storage) |
 | [AF-M01](#af-m01) | Medium | DMX channel values are never range-checked or clamped | No |
-| [AF-M02](#af-m02) | Medium | `sensitivity` and other numeric fields are unbounded | No |
+| [AF-M02](#af-m02) | Medium | `sensitivity` and other numeric fields are unbounded | ~~No~~ **Resolved** |
 | [AF-M03](#af-m03) | Medium | Runtime state is module-global with no concurrency story | No |
 | [AF-M04](#af-m04) | Medium | Model/record duplication requires four-place edits | No |
-| [AF-M05](#af-m05) | Medium | `Library.load()` writes to disk | No |
+| [AF-M05](#af-m05) | Medium | `Library.load()` writes to disk | ~~No~~ **Partly resolved** |
 | [AF-M06](#af-m06) | Medium | `DMXConfig.universe` defaults to 0, not a valid sACN universe | ~~No~~ **Resolved** |
 | [AF-M07](#af-m07) | Medium | `backend/config/config.py` is an empty file duplicating a real module | ~~No~~ **Resolved** |
 | [AF-M08](#af-m08) | Medium | No logging anywhere in the codebase | ~~No~~ **Resolved** |
@@ -96,7 +98,19 @@ against the current schema.
 `(target_id, beats)` for both DMX and WLED in one change, so the two do not
 diverge. Validate `beats >= 1` at load.
 
-*Blocks:* **yes.**
+> **Update (Aug 2026): partly resolved.** Both cue lists now carry `beats`, constrained
+> to `ge=1` on the model, and the schema 3 → 4 migration lifted the old `0` default and
+> gave DMX lists the field they never had. A sequencer can be and has been built against
+> the schema — this no longer blocks anything.
+>
+> **What remains:** `beats` is one scalar per list, so every entry in a list holds for
+> the same number of beats. The per-*entry* shape recommended above was deliberately
+> deferred, because it requires cue lists to hold objects rather than a flat list of ids,
+> which in turn requires the integrity checker, orphan pruner, and cascade delete to
+> understand nested references. With almost no authored content in the library, making
+> that change later is no more expensive than making it now.
+
+*Blocks:* ~~**yes**~~ no longer.
 
 ---
 
@@ -227,6 +241,16 @@ diagnose mid-show.
 *Recommended action.* Add `Field(ge=0.0, le=1.0)` to both, and record the semantics
 per [audio_reactivity_architecture.md](audio_reactivity_architecture.md#51-sensitivity).
 
+> **Update (Aug 2026): resolved for `sensitivity`.** `Scene.sensitivity` is bounded to
+> 0.0–1.0, so negatives, infinity, and NaN are all rejected, and the schema 3 → 4
+> migration clamped values already on disk (NaN, which cannot be clamped, falls back to
+> 0.5). `DMXConfig` gained bounds on `universe`, `port`, `priority`, and `refresh_hz` at
+> the same time.
+>
+> The undefined *relationship* between `Scene.sensitivity` and
+> `AudioConfig.default_sensitivity` is still undefined — that needs an audio processor to
+> settle, not a constraint.
+
 ---
 
 ### AF-M03
@@ -290,6 +314,16 @@ already exist to opt out — they are simply not the default.
 *Recommended action.* Low-risk to leave as-is given the reconciliation is genuinely
 useful, but document it clearly and consider a `read_only` mode. At minimum, tests
 must pass an explicit `root`.
+
+> **Update (Aug 2026): partly resolved.** `sync_ilda` now defaults to **false**, so
+> `load()` no longer writes ILDA files as a side effect of reading — the laser path is
+> parked, which made an opt-in default the obvious choice. Callers that want the folder
+> reconciled ask for it.
+>
+> **What remains:** constructing a `Library` still runs `ensure_layout`, `migrate`, and
+> `ensure_config`, so it can still create directories and write `config.json`. That is
+> harder to remove because migration-on-open is a deliberate safety property, and it is
+> the reason a `read_only` mode is still worth having.
 
 ---
 

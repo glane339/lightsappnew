@@ -1,48 +1,53 @@
 # Audio Reactivity Architecture
 
-> **Status: entirely Target.** There is no audio code in this repository. A
-> case-insensitive search for `audio`, `bpm`, `beat`, `fft`, `onset`, `spectrum`,
-> and `sounddevice` across all source files returns only three things:
-> `Scene.sensitivity`, `AudioConfig` in [`storage/config.py:29-32`](../backend/storage/config.py#L29-L32),
-> and `WLED_Preset_List.beats`. No signal processing exists.
+> **Status: the boundary exists; the signal processing does not.**
+> [`audio/beat_source.py`](../backend/audio/beat_source.py) defines the `BeatSource`
+> protocol that everything downstream consumes, plus `ManualBeatSource`, which emits
+> beats the caller supplies — a scripted list in tests, or a tap-tempo key.
 >
-> Nothing in this document describes implemented behaviour, and no accuracy,
-> latency, or detection-quality guarantee is claimed for any of it.
+> **No audio is captured and no beat is detected anywhere in this repository.** There is
+> no FFT, no onset detection, no tempo estimation, and no audio input. `bpm` is a value
+> something else sets, not a measurement. Choosing and adapting a real library is
+> [WS-9](current_sprint.md#ws-9--real-beat-detection), and no accuracy, latency, or
+> detection-quality guarantee is claimed for anything here.
+>
+> What the boundary does buy: everything from a beat to light on the wall is built and
+> tested, so the audio work is genuinely isolated to producing beat events.
 
 ---
 
 ## 1. Current state
 
-Two artefacts anticipate audio:
+The consumer side is finished. `SceneController.on_beat()` is the single method a beat
+source has to call, and everything after it — advancing two cue lists, writing the DMX
+buffer, activating LEDfx scenes — is implemented and tested. The protocol a real
+detector must satisfy is small:
 
 ```python
-# backend/storage/config.py:29
-class AudioConfig(BaseModel):
-    input_device: Optional[str] = None
-    default_sensitivity: float = 0.5
+# backend/audio/beat_source.py
+class BeatSource(Protocol):
+    @property
+    def bpm(self) -> Optional[float]: ...
+    @property
+    def beat_count(self) -> int: ...
+    def subscribe(self, callback: BeatCallback) -> None: ...
+    def start(self) -> None: ...
+    def stop(self) -> None: ...
 ```
+
+Wiring a source to a show is two lines, which is the point of keeping the seam this
+narrow:
 
 ```python
-# backend/models/Scene.py:9
-    sensitivity: float
+beats = ManualBeatSource(bpm=128.0)
+beats.subscribe(controller.on_beat)
 ```
 
-`AudioConfig` is instantiated as part of `AppConfig` and round-tripped to
-`config.json`. `Scene.sensitivity` is persisted and validated. **Neither is read by
-any code.**
-
-Additionally, the placeholder seam is already marked in the runtime layer:
-
-```python
-# backend/runtime/active.py:53
-def active_dmx_preset_id(library, scene_id: str, index: int = 0) -> str:
-    """The DMX preset a scene is currently on. Audio input will pick the index later."""
-```
-
-That `index` parameter is where the audio-driven sequencer will eventually supply a
-value — though per [architecture.md](architecture.md#32-target-component-boundaries)
-the Audio Processor should never call this directly; a Beat Sequencer sits between
-them.
+Two config artefacts still anticipate audio and are still read by nothing:
+`AudioConfig.input_device` / `default_sensitivity`
+([`storage/config.py`](../backend/storage/config.py)), and `Scene.sensitivity`, which is
+now bounded to 0.0–1.0 and exposed as `SceneController.sensitivity` for a processor to
+pick up.
 
 ---
 

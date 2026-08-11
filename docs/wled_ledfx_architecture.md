@@ -154,16 +154,28 @@ Sync stores `"Living Room"`; activate sends
 
 ## 4. Beat-driven iteration
 
-**Target only** — no sequencer exists yet. Identical state machine to the DMX side;
-see [show_control_architecture.md](show_control_architecture.md#5-beat-driven-sequencing).
+**Implemented.** The same `CueSequencer` class as the DMX side, driven by the same beat
+stream but advancing independently; see
+[show_control_architecture.md](show_control_architecture.md#5-beat-driven-sequencing).
 
 ```mermaid
 flowchart TD
-    A["beat event"] --> B["WLED BeatSequencer<br/>same class as DMX"]
-    B --> C{"index changed?"}
+    A["beat event"] --> B["CueSequencer<br/>same class as DMX"]
+    B --> C{"cue changed?"}
     C -->|no| D["nothing"]
-    C -->|yes| E["LEDfx Client:<br/>activate entry.wled_preset_id<br/>(scene name)"]
+    C -->|yes| E["WledOutput → LEDfx Client:<br/>activate_scene(wled_preset_id)"]
 ```
+
+Two things stop this from generating pointless HTTP traffic. The sequencer reports
+nothing when the cue has not changed, and a one-entry list never reports a change at
+all — so a scene with a single LEDfx cue results in exactly one activation, not one per
+beat. `LedFxClient.activate_scene` then dedupes again on its own against the last scene
+it activated.
+
+`WledOutput` swallows `LedFxError` after logging it, because LEDfx being unreachable
+should cost the strips and not the show. The call is still synchronous on the
+beat-handling path, which is a real limitation — see
+[show_control_architecture.md](show_control_architecture.md#6-concurrency-and-race-conditions).
 
 Runtime behaviour, per the intended design:
 

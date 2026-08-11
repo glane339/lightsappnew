@@ -19,7 +19,7 @@ ILDA_FRAMES = "ilda_frames"
 class SceneRecord(BaseModel):
     id: str
     preset_id: str
-    ilda_frame_list_id: str
+    ilda_frame_list_id: Optional[str] = None
     sensitivity: float
 
 
@@ -32,6 +32,7 @@ class PresetRecord(BaseModel):
 class DMXPresetListRecord(BaseModel):
     id: str
     dmx_preset_ids: List[str] = []
+    beats: int = 1
 
 
 class DMXPresetRecord(BaseModel):
@@ -58,7 +59,7 @@ class DMXDevicePresetRecord(BaseModel):
 class WLEDPresetListRecord(BaseModel):
     id: str
     wled_preset_ids: List[str] = []
-    beats: int = 0
+    beats: int = 1
 
 
 class WLEDPresetRecord(BaseModel):
@@ -109,7 +110,9 @@ COLLECTION_ORDER: Tuple[str, ...] = (
 ROOT_COLLECTIONS: Tuple[str, ...] = (SCENES, ILDA_FRAMES, DMX_DEVICES)
 
 # parent collection -> (id attribute, child collection, attribute holds a list of ids)
-# The attribute name is the same on the model and on the record.
+# The attribute name is the same on the model and on the record. A single-id attribute
+# that the model allows to be None is detached on delete rather than taking its parent
+# down with it; see Library._delete_cascade.
 REFERENCES: Dict[str, Tuple[Tuple[str, str, bool], ...]] = {
     SCENES: (
         ("preset_id", PRESETS, False),

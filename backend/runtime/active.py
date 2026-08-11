@@ -3,14 +3,12 @@ from __future__ import annotations
 from typing import Dict, List
 
 from models.Active_DMX_Channels import UNIVERSE_SIZE, Active_DMX_Channels
-from models.Active_ILDA_Frame import Active_ILDA_Frame
 from storage.json_store import StorageError
 from storage.records import (
     DMX_DEVICE_PRESETS,
     DMX_DEVICES,
     DMX_PRESET_LISTS,
     DMX_PRESETS,
-    ILDA_FRAME_LISTS,
     PRESETS,
     SCENES,
 )
@@ -19,10 +17,10 @@ from storage.records import (
 # recorded now, but anything other than this is rejected rather than silently dropped.
 SUPPORTED_UNIVERSE = 1
 
-# The two instances the senders read. Rebuilt in place so a sender holding a reference
-# always sees the latest values.
+# The instance a sender reads. Rebuilt in place so a sender holding a reference always
+# sees the latest values. ILDA has no equivalent: the laser path is parked, so nothing
+# here resolves frames — see docs/laser_and_haze_safety.md.
 active_dmx_channels = Active_DMX_Channels()
-active_ilda_frame = Active_ILDA_Frame()
 
 
 def build_channels(library, dmx_preset_id: str) -> List[int]:
@@ -71,7 +69,7 @@ def build_channels(library, dmx_preset_id: str) -> List[int]:
 
 
 def active_dmx_preset_id(library, scene_id: str, index: int = 0) -> str:
-    """The DMX preset a scene is currently on. Audio input will pick the index later."""
+    """The DMX preset a scene is on at a given cue index."""
     scene = library.get(SCENES, scene_id)
     preset = library.get(PRESETS, scene.preset_id)
     preset_list = library.get(DMX_PRESET_LISTS, preset.dmx_preset_list_id)
@@ -80,22 +78,8 @@ def active_dmx_preset_id(library, scene_id: str, index: int = 0) -> str:
     return preset_list.dmx_preset_ids[index]
 
 
-def active_ilda_frame_id(library, scene_id: str, index: int = 0) -> str:
-    """The ILDA frame a scene is currently on. Audio input will pick the index later."""
-    scene = library.get(SCENES, scene_id)
-    frame_list = library.get(ILDA_FRAME_LISTS, scene.ilda_frame_list_id)
-    if not frame_list.ilda_frame_ids:
-        raise StorageError(f"ilda_frame_lists '{frame_list.id}' holds no frames")
-    return frame_list.ilda_frame_ids[index]
-
-
 def update_active_dmx_channels(library, scene_id: str, index: int = 0) -> Active_DMX_Channels:
     active_dmx_channels.channels = build_channels(
         library, active_dmx_preset_id(library, scene_id, index)
     )
     return active_dmx_channels
-
-
-def update_active_ilda_frame(library, scene_id: str, index: int = 0) -> Active_ILDA_Frame:
-    active_ilda_frame.frame_id = active_ilda_frame_id(library, scene_id, index)
-    return active_ilda_frame

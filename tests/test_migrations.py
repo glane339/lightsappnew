@@ -10,7 +10,9 @@ from storage.paths import backups_dir, config_path, ensure_layout
 from storage.records import (
     DMX_DEVICE_PRESETS,
     DMX_DEVICES,
+    DMX_PRESET_LISTS,
     PRESETS,
+    SCENES,
     WLED_PRESET_LISTS,
     WLED_PRESETS,
 )
@@ -89,7 +91,9 @@ def test_migrate_v1_wraps_wled_preset_id_in_list(data_root: Path) -> None:
     list_id = preset["wled_preset_list_id"]
     assert list_id in lists
     assert lists[list_id]["wled_preset_ids"] == ["scene-alpha"]
-    assert lists[list_id]["beats"] == 0
+    # v1→v2 creates the list with the old beats default of 0; v3→v4 lifts it to a
+    # playable 1, so a full chain leaves the list usable rather than merely valid.
+    assert lists[list_id]["beats"] == 1
 
 
 def test_migrate_v2_synthesises_devices_from_order(data_root: Path) -> None:
@@ -109,7 +113,7 @@ def test_migrate_v2_synthesises_devices_from_order(data_root: Path) -> None:
         data_root,
     )
 
-    assert migrate(data_root) == 3
+    assert migrate(data_root) == SCHEMA_VERSION
 
     devices = read_collection(DMX_DEVICES, data_root)
     presets = read_collection(DMX_DEVICE_PRESETS, data_root)
@@ -147,7 +151,7 @@ def test_migrate_v2_widest_channel_count_wins(data_root: Path) -> None:
         data_root,
     )
 
-    assert migrate(data_root) == 3
+    assert migrate(data_root) == SCHEMA_VERSION
 
     devices = read_collection(DMX_DEVICES, data_root)
     assert len(devices) == 1
@@ -166,3 +170,63 @@ def test_migrate_v2_rejects_unusable_device_preset(data_root: Path) -> None:
 
     with pytest.raises(StorageError, match="no usable order/channel_count"):
         migrate(data_root)
+
+
+def test_migrate_v3_makes_cue_lists_playable(data_root: Path) -> None:
+    from storage.json_store import read_collection
+
+    ensure_layout(data_root)
+    write_json(config_path(data_root), {"schema_version": 3})
+    write_collection(
+        DMX_PRESET_LISTS,
+        {"dl-1": {"id": "dl-1", "dmx_preset_ids": ["look-a", "look-b"]}},
+        3,
+        data_root,
+    )
+    write_collection(
+        WLED_PRESET_LISTS,
+        {
+            "wl-zero": {"id": "wl-zero", "wled_preset_ids": ["a"], "beats": 0},
+            "wl-set": {"id": "wl-set", "wled_preset_ids": ["b"], "beats": 8},
+        },
+        3,
+        data_root,
+    )
+
+    assert migrate(data_root) == SCHEMA_VERSION
+
+    dmx_lists = read_collection(DMX_PRESET_LISTS, data_root)
+    wled_lists = read_collection(WLED_PRESET_LISTS, data_root)
+
+    # DMX lists had no beats field at all, so nothing could cycle.
+    assert dmx_lists["dl-1"]["beats"] == 1
+    assert wled_lists["wl-zero"]["beats"] == 1
+    # An operator's real choice is left alone.
+    assert wled_lists["wl-set"]["beats"] == 8
+
+
+def test_migrate_v3_clamps_scene_sensitivity(data_root: Path) -> None:
+    from storage.json_store import read_collection
+
+    ensure_layout(data_root)
+    write_json(config_path(data_root), {"schema_version": 3})
+    write_collection(
+        SCENES,
+        {
+            "high": {"id": "high", "preset_id": "p", "sensitivity": 4.5},
+            "low": {"id": "low", "preset_id": "p", "sensitivity": -2.0},
+            "nan": {"id": "nan", "preset_id": "p", "sensitivity": float("nan")},
+            "fine": {"id": "fine", "preset_id": "p", "sensitivity": 0.25},
+        },
+        3,
+        data_root,
+    )
+
+    assert migrate(data_root) == SCHEMA_VERSION
+
+    scenes = read_collection(SCENES, data_root)
+    assert scenes["high"]["sensitivity"] == 1.0
+    assert scenes["low"]["sensitivity"] == 0.0
+    # NaN cannot be clamped into range, so it falls back to the midpoint.
+    assert scenes["nan"]["sensitivity"] == 0.5
+    assert scenes["fine"]["sensitivity"] == 0.25

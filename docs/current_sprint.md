@@ -16,8 +16,9 @@ flowchart LR
     WS2 --> WS4["WS-4<br/>DMX state<br/>& E1.31"]
     WS3 --> WS4
     WS3 --> WS5["WS-5<br/>LEDfx"]
-    WS1 --> WS7["WS-7<br/>ILDA interface<br/>only"]
+    WS1 --> WS7["WS-7<br/>ILDA severed<br/>from show path"]
     WS1 --> WS8["WS-8<br/>Docs &<br/>onboarding"]
+    WS3 --> WS9["WS-9<br/>Real beat<br/>detection"]
 ```
 
 WS-6 comes before schema changes deliberately: the storage layer's cascade and
@@ -153,50 +154,78 @@ migratable through `REFERENCES` in [`records.py`](../backend/storage/records.py)
 
 ---
 
-## WS-3 · Shared beat sequencing — **PARKED**
+## WS-3 · Shared beat sequencing
 
-> **Parked** with WS-2. A single shared `BeatSequencer` for DMX and WLED may be
-> the wrong control model; redesign before coding.
+> **Unparked and largely built.** The control model settled as: beats per cue *list*
+> (not per entry), two independent sequencers off one beat stream, and the beat source
+> behind a protocol so no audio library choice was needed to build any of it.
 
-### 3.1 `BeatSequencer`
+### 3.1 `CueSequencer`
 - **Goal.** One class: entries, index, beats elapsed, loop mode; consumes beat
   events, emits cue-changed. No I/O, no knowledge of DMX or WLED.
 - **Why.** [D-003](decisions.md#d-003-dmx-and-wled-share-one-beat-sequencing-implementation) —
   duplicated sequencing drifts. This is also the highest-value test target in the
   project and needs no audio or hardware.
-- **Dependencies.** WS-2.2.
 - **Acceptance.** Advances exactly on the beat completing an entry's count; loop and
   hold-last both correct; reset returns to index 0 with a cleared counter; a beat
   that does not advance emits nothing; the full suite runs with a synthetic beat
   list and zero I/O.
-- **Status.** Not started.
-- **Files.** new `backend/runtime/sequencer.py`; new `tests/test_sequencer.py`.
+- **Status.** **Done.** One addition beyond the acceptance criteria: a one-entry list
+  reports no change ever, so LEDfx is not re-told to run the scene it already runs.
+- **Files.** [`runtime/sequencer.py`](../backend/runtime/sequencer.py),
+  [`tests/test_sequencer.py`](../tests/test_sequencer.py).
 
 ### 3.2 Scene Controller
 - **Goal.** Activate/deactivate a scene: resolve definitions once, reset both
   sequencers, apply cue 0 immediately, propagate sensitivity.
-- **Why.** No component owns the current scene today; `ui.last_scene_id` is the only
-  acknowledgement the concept exists.
-- **Dependencies.** 3.1.
+- **Why.** No component owned the current scene; `ui.last_scene_id` was the only
+  acknowledgement the concept existed.
 - **Acceptance.** Activation applies cue 0 without waiting for a beat; switching
   scenes discards outgoing sequence state entirely; an empty cue list is a clean
   activation error, not a crash; the controller holds resolved snapshots rather than
   live `Library` references.
-- **Status.** Not started.
-- **Files.** new `backend/runtime/scene_controller.py`;
-  [`runtime/active.py`](../backend/runtime/active.py).
+- **Status.** **Done.** Sensitivity is exposed for an audio processor to read rather
+  than pushed, since there is no processor to push to. A failed activation leaves the
+  previous scene running.
+- **Files.** [`runtime/scene_controller.py`](../backend/runtime/scene_controller.py),
+  [`runtime/outputs.py`](../backend/runtime/outputs.py),
+  [`tests/test_scene_controller.py`](../tests/test_scene_controller.py),
+  [`tests/test_outputs.py`](../tests/test_outputs.py).
 
-### 3.3 Runtime state ownership
-- **Goal.** Move the module globals in
-  [`runtime/active.py:19-20`](../backend/runtime/active.py#L19-L20) into an owned
-  object with explicit lifecycle and locking.
-- **Why.** [AF-M03](audit_findings.md#af-m03) — three concurrent activities are
-  coming and there is no synchronisation.
-- **Dependencies.** 3.2.
+### 3.3 Beat source boundary
+- **Goal.** A `BeatSource` protocol emitting discrete beats, with a manual
+  implementation, so the sequencing core is built and tested without an audio library.
+- **Why.** The library choice is the least certain part of the audio work — aubio is
+  GPL and unmaintained, the newer options are unproven — and it should not be able to
+  block show logic.
+- **Acceptance.** The controller runs off subscribed beats; a stopped source emits
+  nothing; BPM is carried for display and never drives sequencing.
+- **Status.** **Done** for the boundary. No real detector exists; see WS-9.
+- **Files.** [`audio/beat_source.py`](../backend/audio/beat_source.py).
+
+### 3.4 Runtime state ownership
+- **Goal.** Move the universe buffer global in
+  [`runtime/active.py`](../backend/runtime/active.py) into an owned object with
+  explicit lifecycle and locking.
+- **Why.** [AF-M03](audit_findings.md#af-m03) — concurrent activities are coming and
+  there is no synchronisation. `DmxOutput` already accepts an injected buffer, which is
+  half the work; the remaining half is removing the module-level default and adding a
+  lock shared with beat handling.
+- **Dependencies.** Matters once a real beat source brings its own thread.
 - **Acceptance.** No mutable module-level state; buffer updates and sender reads are
   race-free by construction, not by GIL accident.
 - **Status.** Not started.
 - **Files.** `backend/runtime/`.
+
+### 3.5 Per-entry beat counts
+- **Goal.** Let one cue hold 16 beats and the next 4, by making cue lists hold
+  `{preset_id, beats}` entries instead of a flat list of ids.
+- **Why.** [AF-H02](audit_findings.md#af-h02). Deliberately deferred: `beats` per list
+  unblocked everything else, and the library holds almost no authored content, so
+  changing shape later stays cheap.
+- **Dependencies.** The integrity checker, orphan pruner, and cascade delete all have
+  to understand nested references first.
+- **Status.** Not started — revisit after a real show.
 
 ---
 
@@ -322,23 +351,52 @@ migratable through `REFERENCES` in [`records.py`](../backend/storage/records.py)
 
 ---
 
-## WS-7 · ILDA interface only
+## WS-7 · ILDA severed from the show path
 
-### 7.1 Define the boundary; implement nothing behind it
-- **Goal.** A stub ILDA Controller accepting a frame list and doing nothing,
-  reachable only from the Scene Controller.
-- **Why.** [D-008](decisions.md#d-008-ilda-stays-behind-a-separate-processor-boundary) —
-  fixing the seam now prevents laser concerns leaking into the lighting path later.
-- **Dependencies.** WS-3.2.
-- **Acceptance.** One interface; no device access, no enumeration, no partial output
-  implementation; nothing outside the Scene Controller references it; the
-  prerequisites in
-  [laser_and_haze_safety.md](laser_and_haze_safety.md#4-what-must-exist-before-output-is-enabled)
-  remain unmet and unstarted.
+### 7.1 Take ILDA out of the runtime rather than stubbing it
+- **Goal.** No laser concern anywhere on the path a scene takes to output.
+- **Why.** Superseded the original plan of a stub ILDA Controller. A stub still has to
+  be called from somewhere, and the cheapest correct answer while laser work is parked
+  is for nothing to call it at all.
+- **Status.** **Done.** `Scene.ilda_frame_list_id` is optional, so scenes are complete
+  without one; `runtime/active.py` no longer resolves frames and no longer holds an
+  `Active_ILDA_Frame`; `SceneController` never mentions ILDA; and the folder sync is
+  opt-in rather than running on every open.
+- **Deliberately left alone.** The ILDA models, records, blob store, archive support,
+  and their tests are all intact and simply unreferenced — ILDA runs through 112 places
+  in `backend/`, and tearing that out would have damaged the integrity checker and
+  archive for no gain. Making `ilda_frame_list_id` required again is all it takes to
+  bring the path back.
+- **Files.** [`models/Scene.py`](../backend/models/Scene.py),
+  [`runtime/active.py`](../backend/runtime/active.py),
+  [`storage/library.py`](../backend/storage/library.py).
+
+**Explicit non-goal, unchanged:** no laser output code of any kind.
+
+---
+
+## WS-9 · Real beat detection
+
+### 9.1 Choose and adapt an audio library
+- **Goal.** A `BeatSource` implementation driven by real audio, behind the protocol
+  WS-3.3 already established.
+- **Why.** `ManualBeatSource` proves the show logic but cannot run a show.
+- **Open questions, none of them settled.**
+  - **Licensing.** aubio is the best technical fit — C, causal, built for live beat
+    tracking — but it is GPL, not MIT/BSD, which constrains distribution. It has also
+    seen no release in years, so Python 3.12 wheels on Windows are a risk.
+  - **Alternatives.** `libsonare` (C++ core, permissive, has a streaming analyzer) and
+    `sonara` (Rust, fast, but beat tracking looks batch-oriented). Neither is as proven
+    for live use.
+  - **Capture is separate.** All of these take buffers; getting audio in needs
+    `sounddevice` or equivalent.
+  - **LEDfx already captures audio** on the same machine. Two processes competing for
+    the same input or loopback device is a real Windows problem, and it is worth
+    checking whether LEDfx can supply beat data before adding a second analyzer.
+- **Acceptance.** Beats arrive from live audio; the suite still runs with no audio
+  device; BPM is display-only.
 - **Status.** Not started.
-- **Files.** new `backend/runtime/ilda_controller.py`.
-
-**Explicit non-goal for this sprint:** no laser output code of any kind.
+- **Files.** `backend/audio/`.
 
 ---
 

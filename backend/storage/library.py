@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Type
+from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Type, get_args
 
 from pydantic import BaseModel, ValidationError
 
@@ -89,6 +89,14 @@ def _ref_ids(obj: Any, attr: str, is_list: bool) -> List[str]:
     return [] if value is None else [value]
 
 
+def _is_optional_ref(collection: str, attr: str) -> bool:
+    """Whether a single-id attribute can hold None, and so can be detached on delete."""
+    field = MODEL_TYPES[collection].model_fields.get(attr)
+    if field is None:
+        return False
+    return type(None) in get_args(field.annotation)
+
+
 class Library:
     """
     The in-memory library, backed by one normalized JSON file per model class.
@@ -129,12 +137,18 @@ class Library:
         }
 
     @classmethod
-    def open(cls, root: Optional[Path] = None, sync_ilda: bool = True) -> "Library":
+    def open(cls, root: Optional[Path] = None, sync_ilda: bool = False) -> "Library":
         return cls(root).load(sync_ilda=sync_ilda)
 
     # ------------------------------------------------------------------ loading
 
-    def load(self, sync_ilda: bool = True) -> "Library":
+    def load(self, sync_ilda: bool = False) -> "Library":
+        """
+        Read every collection from disk and check the graph.
+
+        ILDA folder sync is opt-in: laser support is parked, and syncing made opening
+        the library a write ([AF-M05](../../docs/audit_findings.md#af-m05)).
+        """
         records = {collection: self._read_records(collection) for collection in COLLECTION_ORDER}
         self.clear()
 
@@ -165,7 +179,11 @@ class Library:
                 wled_preset_list_id=record.wled_preset_list_id,
             )
         if collection == DMX_PRESET_LISTS:
-            return DMX_Preset_List(id=record.id, dmx_preset_ids=list(record.dmx_preset_ids))
+            return DMX_Preset_List(
+                id=record.id,
+                dmx_preset_ids=list(record.dmx_preset_ids),
+                beats=record.beats,
+            )
         if collection == DMX_PRESETS:
             return DMX_Preset(
                 id=record.id, dmx_device_preset_ids=list(record.dmx_device_preset_ids)
@@ -261,7 +279,11 @@ class Library:
                 wled_preset_list_id=obj.wled_preset_list_id,
             )
         if collection == DMX_PRESET_LISTS:
-            return DMXPresetListRecord(id=obj.id, dmx_preset_ids=list(obj.dmx_preset_ids))
+            return DMXPresetListRecord(
+                id=obj.id,
+                dmx_preset_ids=list(obj.dmx_preset_ids),
+                beats=obj.beats,
+            )
         if collection == DMX_PRESETS:
             return DMXPresetRecord(
                 id=obj.id, dmx_device_preset_ids=list(obj.dmx_device_preset_ids)
@@ -408,7 +430,12 @@ class Library:
                         if len(remaining) != len(value):
                             setattr(parent, attr, remaining)
                     elif value == obj_id:
-                        self._delete_cascade(parent_collection, parent_id, deleted, visiting)
+                        # An optional parent survives losing this child; a required one
+                        # cannot exist without it and goes too.
+                        if _is_optional_ref(parent_collection, attr):
+                            setattr(parent, attr, None)
+                        else:
+                            self._delete_cascade(parent_collection, parent_id, deleted, visiting)
 
         self._maps[collection].pop(obj_id, None)
         deleted.append(key)

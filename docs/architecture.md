@@ -40,31 +40,37 @@ backend/
 │   └── service.py           build_ledfx_stack factory
 ├── logging_setup.py         File + stderr logging into data-folder logs/
 ├── models/                  Runtime pydantic models (11 files)
-│   ├── Scene.py
+│   ├── Scene.py             optional ilda_frame_list_id; sensitivity bounded 0–1
 │   ├── Preset.py            wled_preset_list_id → WLED_Preset_List
-│   ├── DMX_Preset_List.py
+│   ├── DMX_Preset_List.py   cue list + beats per entry
 │   ├── DMX_Preset.py
 │   ├── DMX_Device_Preset.py device_id + channel_values
 │   ├── DMX_Device.py        the patch: universe, start_address, channel_count
 │   ├── WLED_Preset.py       id = LEDfx scene name
-│   ├── WLED_Preset_List.py  registered in storage (schema v2)
+│   ├── WLED_Preset_List.py  cue list + beats per entry
 │   ├── ILDA_Frame_List.py
 │   ├── ILDA_Frame.py
 │   ├── Active_DMX_Channels.py
-│   └── Active_ILDA_Frame.py
+│   └── Active_ILDA_Frame.py  unreferenced; laser path severed
+├── audio/
+│   └── beat_source.py       BeatSource protocol + ManualBeatSource
 ├── runtime/
-│   └── active.py            Module-global live state + look flattening (82 lines)
+│   ├── active.py            Universe buffer + look flattening by address
+│   ├── sequencer.py         CueSequencer: pure beat-driven state machine
+│   ├── outputs.py           DmxOutput / WledOutput behind one apply()
+│   └── scene_controller.py  Owns the active scene and both sequencers
+├── seed_devices.py          Seeds the rig's patch into the library
 └── storage/
     ├── paths.py             Data-folder layout, platformdirs
     ├── json_store.py        Atomic write, corrupt-file quarantine
     ├── records.py           On-disk schemas + the reference graph (10 collections)
     ├── library.py           In-memory object graph, CRUD, integrity, cascade
-    ├── migrations.py        Schema v3; v2→v3 synthesises devices from `order`
+    ├── migrations.py        Schema v4; v3→v4 adds cue-list beats, clamps sensitivity
     ├── ilda_blobs.py        .ild file storage, id validation
     ├── config.py            AppConfig (dmx/ledfx/ilda/audio/ui)
     └── archive.py           Zip export/import with traversal guards
 
-tests/                       pytest storage suite (temp data root)
+tests/                       pytest suite: storage, sequencing, outputs (temp data root)
 pytest.ini                   pythonpath = backend
 ```
 
@@ -195,67 +201,75 @@ newly-added device alone.
 
 Remaining structural gaps:
 
-- **Beat duration is unrepresented.** No entry in either cue list carries a per-entry
-  beat count. `WLED_Preset_List.beats` is a single scalar on the whole list.
+- **Beat duration is per cue list, not per entry.** `DMX_Preset_List.beats` and
+  `WLED_Preset_List.beats` each apply to every entry in their list, so a list cannot hold
+  one look for 16 beats and the next for 4 ([AF-H02](audit_findings.md#af-h02)).
+- **No loop-mode field.** `CueSequencer` supports hold-last, but nothing persists the
+  choice, so every list loops.
 - **One universe only.** `DMX_Device.universe` is persisted, but
   [`runtime/active.py`](../backend/runtime/active.py) buffers universe 1 and rejects
   anything else rather than silently dropping it.
 
 ### 2.4 Current DMX address derivation
 
-This is the most consequential piece of current logic. From
-[`runtime/active.py:23-50`](../backend/runtime/active.py#L23-L50):
+From [`build_channels`](../backend/runtime/active.py):
 
 ```mermaid
 flowchart TD
     A["DMX_Preset"] --> B["fetch each DMX_Device_Preset"]
-    B --> C["sort by .order"]
-    C --> D["cursor = 0"]
-    D --> E["copy channel_values into the buffer<br/>from cursor to cursor + channel_count"]
-    E --> F["cursor += channel_count"]
-    F --> G{"more devices?"}
-    G -->|yes| E
-    G -->|no| H["512-value list"]
+    B --> C["fetch its DMX_Device"]
+    C --> D["reject: wrong universe, or past channel 512"]
+    D --> E["reject: two devices claiming one channel"]
+    E --> F["copy channel_values into the buffer<br/>from device.start_address"]
+    F --> G["512-value list"]
 ```
 
-**A device's DMX start address is the sum of the `channel_count` of every device
-before it.** It is not stored anywhere. Consequences:
+**A device's start address comes from its own `DMX_Device` record**, so the patch is
+stored once and every look resolves against it. `channel_values` is padded or truncated
+to the device's `channel_count`, so a look that disagrees with the patch cannot spill
+into a neighbour.
 
-| Consequence | Why it matters |
+This replaced positional derivation, where a device's address was the sum of the
+`channel_count` of every device before it in the look — finding
+[AF-H01](audit_findings.md#af-h01), now resolved. What that fixed:
+
+| Was | Now |
 | --- | --- |
-| No stable device identity | The same physical fixture is a *different* `DMX_Device_Preset` row in every look, with no shared key. Nothing links them. |
-| Addressing is duplicated per look | The rig's patch is implicitly restated in every `DMX_Preset`, with no single source of truth to check against the fixtures' actual DIP switches. |
-| One edit re-addresses a whole look | Changing one device's `channel_count` silently shifts every subsequent device in that look, and *only* in that look — the rig's looks then disagree with each other. |
-| Address gaps cannot be expressed | A real patch with a fixture at 1 and the next at 20 has no representation; devices must be contiguous. |
-| Single universe only | `Active_DMX_Channels` is one 512-value list and `build_channels` raises when the cursor exceeds 512 ([`active.py:40-45`](../backend/runtime/active.py#L40-L45)). |
+| The same fixture was a different row in every look, with no shared key | One `DMX_Device` per fixture, referenced by every look |
+| The patch was implicitly restated in every look | Stored once, checkable against what is dialled into the fixtures |
+| Changing one `channel_count` silently re-addressed every later device, in that look only | Addresses are independent; a channel-count change affects one device |
+| Address gaps were inexpressible; devices had to be contiguous | Gaps are ordinary — the rig has one at channel 24 |
+| Two devices overlapping silently overwrote each other | Overlap raises `StorageError` naming both devices and the channel |
 
-This is finding [AF-H01](audit_findings.md#af-h01) and the single highest-value
-thing to fix.
+Still open: **one universe.** `Active_DMX_Channels` is a single 512-value list, and a
+device patched to any other universe is rejected rather than buffered.
 
 ### 2.5 Current runtime state
 
-[`runtime/active.py:19-20`](../backend/runtime/active.py#L19-L20) declares two
-module-level mutable singletons:
+Runtime state now has three distinct homes, which is the division
+[show_control_architecture.md](show_control_architecture.md#1-the-four-kinds-of-state)
+sets out:
 
-```python
-active_dmx_channels = Active_DMX_Channels()
-active_ilda_frame = Active_ILDA_Frame()
-```
+| State | Owner | Lifetime |
+| --- | --- | --- |
+| Universe buffer | `active_dmx_channels` in [`runtime/active.py`](../backend/runtime/active.py) | Process |
+| Sequence state (index, beats elapsed) | One `CueSequencer` per cue list | One activation |
+| Active scene | `SceneController` | One activation |
 
-Correctly marked as never persisted (`Active_DMX_Channels` is absent from
-`RECORD_TYPES`, and its docstring says so explicitly). But:
+None of it is persisted (`Active_DMX_Channels` is absent from `RECORD_TYPES`). What is
+still wrong:
 
-- They are process globals with no owner, no lifecycle, and no locking. Once an
-  audio thread and a sender thread exist, this becomes a data race —
-  see [AF-M03](audit_findings.md#af-m03).
-- `update_active_dmx_channels` **replaces** `.channels` with a new list. A consumer
-  holding the model object sees updates; a consumer that cached `.channels`
-  directly does not. The docstring's "rebuilt in place" is true of the model, not
-  of the list.
-- The `index: int = 0` parameter on `active_dmx_preset_id` and `active_ilda_frame_id`
-  is the explicit seam left for beat sequencing — the docstrings say *"Audio input
-  will pick the index later"* ([`active.py:54`](../backend/runtime/active.py#L54)).
-  That seam is where the Target beat sequencer plugs in.
+- The universe buffer is a **process global with no owner, no lifecycle, and no
+  locking**. `DmxOutput` accepts an injected buffer, which is what the tests use, but
+  the module-level default remains and becomes a data race the moment a real beat source
+  brings its own thread — [AF-M03](audit_findings.md#af-m03).
+- `DmxOutput.apply` **replaces** `.channels` with a freshly built list rather than
+  mutating it. A consumer holding the model object sees updates; one that cached
+  `.channels` directly does not. This also happens to make the swap atomic under
+  CPython's GIL — a useful accident, not a designed guarantee.
+- `active_ilda_frame` is **gone**, along with the ILDA resolution functions. The laser
+  path no longer exists in the runtime; see
+  [laser_and_haze_safety.md](laser_and_haze_safety.md).
 
 ### 2.6 Current persistence boundaries
 
@@ -479,16 +493,17 @@ flowchart TB
     end
     subgraph C["Current"]
         direction TB
-        c1["(no controller)"]
-        c2["(no audio)"]
-        c3["Library.get chain<br/>in active.py"]
-        c4["index: int = 0<br/>placeholder param"]
-        c5["build_channels<br/>positional packing"]
+        c1["SceneController"]
+        c2["BeatSource protocol<br/>(manual only, no detection)"]
+        c3["CueSequencer ×2<br/>independent"]
+        c5["build_channels<br/>by patched address"]
         c6["one global 512 list"]
         c7["(no sender)"]
-        c8["(no client)"]
+        c8["LedFxClient<br/>activate_scene"]
         c9["(blob storage only)"]
-        c3 --> c4 --> c5 --> c6
+        c2 --> c1 --> c3
+        c3 --> c5 --> c6 --> c7
+        c3 --> c8
     end
 ```
 
@@ -500,14 +515,14 @@ Full detail with severities in [audit_findings.md](audit_findings.md). Summary:
 
 | # | Debt | Impact |
 | --- | --- | --- |
-| 1 | Single-universe buffer; `DMX_Device.universe` persisted but not honoured | Blocks a second universe |
-| 2 | Beat duration absent from cue-list entries | Blocks beat-driven sequencing |
-| 3 | Show loop absent; LEDfx client unwired | No automatic preset activation |
+| 1 | Single-universe buffer; `DMX_Device.universe` persisted but rejected beyond universe 1 | Blocks a second universe |
+| 2 | Beat duration is per cue *list*, not per entry | Every cue in a list holds for the same time |
+| 3 | No E1.31 sender | The universe buffer reaches no hardware |
 | 4 | Model/record duplication with hand-written converters | Every field change requires multiple edits |
-| 5 | Module-global runtime state, no concurrency story | Will race once audio and sender threads exist |
-| 6 | No value-range validation on DMX or sensitivity fields | Out-of-range values reach the wire unclamped |
-| 7 | Storage tests only; no runtime/output coverage | Show loop changes still unverified |
-| 8 | Logging exists but no app entry point calls `configure_logging()` yet | Failures visible once a process starts |
+| 5 | Module-global universe buffer, no locking; LEDfx called on the beat path | Will race once an audio thread exists; a hung LEDfx stalls beats |
+| 6 | No value-range validation on DMX channel values | Out-of-range values would reach the wire unclamped |
+| 7 | No real beat detection | The show cannot run from audio |
+| 8 | No app entry point, so nothing calls `configure_logging()` | Logging exists but only tests and scripts start it |
 
 Item 4 deserves nuance: separating the on-disk schema (`records.py`) from the
 runtime model (`models/`) is a *legitimate and deliberate* choice — it lets the

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import shutil
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
@@ -8,11 +9,18 @@ from uuid import uuid4
 
 from storage.json_store import StorageError, read_collection, read_json, write_collection, write_json
 from storage.paths import config_path, data_dir, ensure_layout, ilda_dir, new_backup_dir
-from storage.records import DMX_DEVICE_PRESETS, DMX_DEVICES, PRESETS, WLED_PRESET_LISTS
+from storage.records import (
+    DMX_DEVICE_PRESETS,
+    DMX_DEVICES,
+    DMX_PRESET_LISTS,
+    PRESETS,
+    SCENES,
+    WLED_PRESET_LISTS,
+)
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 MigrationStep = Callable[[Path], None]
 
@@ -184,3 +192,37 @@ def migrate_device_presets_to_devices(root: Path) -> None:
 
     write_collection(DMX_DEVICES, devices, 3, root)
     write_collection(DMX_DEVICE_PRESETS, updated_presets, 3, root)
+
+
+@migration(3)
+def migrate_cue_list_beats(root: Path) -> None:
+    """
+    Schema 3 → 4: cue lists carry a usable beat count, and scene sensitivity is bounded.
+
+    DMX lists gain ``beats`` (they had none, so nothing could cycle), WLED lists have
+    the old ``beats: 0`` default lifted to 1, and ``Scene.sensitivity`` is clamped into
+    0.0–1.0 so the bounds now on the model cannot reject data already on disk.
+    """
+    dmx_lists = read_collection(DMX_PRESET_LISTS, root)
+    for item in dmx_lists.values():
+        beats = item.get("beats")
+        if not isinstance(beats, int) or beats < 1:
+            item["beats"] = 1
+
+    wled_lists = read_collection(WLED_PRESET_LISTS, root)
+    for item in wled_lists.values():
+        beats = item.get("beats")
+        if not isinstance(beats, int) or beats < 1:
+            item["beats"] = 1
+
+    scenes = read_collection(SCENES, root)
+    for item in scenes.values():
+        sensitivity = item.get("sensitivity")
+        if not isinstance(sensitivity, (int, float)) or math.isnan(sensitivity):
+            item["sensitivity"] = 0.5
+        else:
+            item["sensitivity"] = min(1.0, max(0.0, float(sensitivity)))
+
+    write_collection(DMX_PRESET_LISTS, dmx_lists, 4, root)
+    write_collection(WLED_PRESET_LISTS, wled_lists, 4, root)
+    write_collection(SCENES, scenes, 4, root)

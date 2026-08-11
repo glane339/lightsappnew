@@ -3,11 +3,19 @@
 How a scene runs. Companion to [architecture.md](architecture.md); terminology from
 [project_overview.md](project_overview.md#key-terminology).
 
-> **Status: almost entirely Target.** The repository contains no scene controller,
-> no sequencer, and no activation logic. The only current code on this path is
-> [`runtime/active.py`](../backend/runtime/active.py), which resolves a scene to a
-> look given an explicitly supplied index. Everything below marked **Target** is a
-> proposal, not a description.
+> **Status: the core is now implemented.** A scene can be activated and will cycle
+> both its cue lists off a beat stream, sending looks to the DMX universe buffer and
+> LEDfx scenes to the LEDfx API:
+> [`runtime/sequencer.py`](../backend/runtime/sequencer.py),
+> [`runtime/outputs.py`](../backend/runtime/outputs.py),
+> [`runtime/scene_controller.py`](../backend/runtime/scene_controller.py), and
+> [`audio/beat_source.py`](../backend/audio/beat_source.py).
+>
+> What is still **Target**: real beat detection (the beat source is a protocol with a
+> manual implementation, no audio library chosen), the E1.31 sender that would put the
+> universe buffer on the wire, concurrency (§6), and any operator UI. Laser output is
+> severed from this path entirely — see
+> [laser_and_haze_safety.md](laser_and_haze_safety.md).
 
 ---
 
@@ -18,37 +26,44 @@ different owners, and different persistence rules.
 
 | Kind | Contains | Lifetime | Persisted? | Current owner |
 | --- | --- | --- | --- | --- |
-| **Preset configuration** | Scenes, lighting presets, DMX cue lists, looks, and device states; fixtures once introduced | Edited by the operator; survives restart | **Yes** — `data/*.json` | [`storage/library.py`](../backend/storage/library.py) for the implemented types |
-| **Scene state** | Which scene is active, when it was activated, its sensitivity | One scene activation | No | *nothing — Target* |
-| **Sequence state** | Per-cue-list: current index, beats elapsed, loop mode | One scene activation | No | *nothing — the `index` parameter at [`active.py:53`](../backend/runtime/active.py#L53) is a placeholder for it* |
-| **Output state** | Universe buffers, dirty flags, currently-active LEDfx preset, socket handles | Process lifetime | **No** | [`runtime/active.py:19-20`](../backend/runtime/active.py#L19-L20) (DMX only, as module globals) |
+| **Preset configuration** | Scenes, lighting presets, DMX cue lists, looks, device states, fixtures, and how many beats each cue list holds per entry | Edited by the operator; survives restart | **Yes** — `data/*.json` | [`storage/library.py`](../backend/storage/library.py) |
+| **Scene state** | Which scene is active and its sensitivity | One scene activation | No | [`runtime/scene_controller.py`](../backend/runtime/scene_controller.py) |
+| **Sequence state** | Per-cue-list: current index, beats elapsed, loop mode | One scene activation | No | [`runtime/sequencer.py`](../backend/runtime/sequencer.py), one instance per cue list |
+| **Output state** | Universe buffer; LEDfx's own idea of the active scene | Process lifetime | **No** | [`runtime/active.py`](../backend/runtime/active.py) (still a module global — [AF-M03](audit_findings.md#af-m03)) |
 
-A recurring failure mode in show-control software is letting sequence state leak
-into preset configuration — e.g. storing "current index" on the cue list object.
-`WLED_Preset_List.beats` is arguably an early instance of this ambiguity: it is a
-single scalar on the list, and it is unclear whether it is meant as configuration
-(single scalar on the list, not per entry). Per-entry beat shape is still absent
-([AF-H02](audit_findings.md#af-h02)); WS-2 is parked pending show-control redesign.
+A recurring failure mode in show-control software is letting sequence state leak into
+preset configuration — e.g. storing "current index" on the cue list object. The
+division now holds: `beats` on a cue list is configuration (how long each entry
+holds), while `index` and `beats_elapsed` live only on a `CueSequencer`, which is
+created at activation and thrown away at the next one.
+
+`beats` is a single scalar per list, so every entry in a list holds for the same
+number of beats. Per-entry beat shape remains absent
+([AF-H02](audit_findings.md#af-h02)) — it needs cue lists to hold
+`{preset_id, beats}` entries rather than a flat list of ids, which in turn needs the
+integrity checker, orphan pruner, and cascade delete to understand nested references.
+Deferred until a real show proves it necessary.
 
 ---
 
 ## 2. Manual scene selection
 
-**Current:** no selection mechanism exists. `AppConfig.ui.last_scene_id`
-([`storage/config.py:36`](../backend/storage/config.py#L36)) is the only
-acknowledgement that a scene can be "current", and nothing reads or writes it.
+**Current:** `SceneController.activate(scene_id)` is the sole entry point, and
+`active_scene_id` is the answer to "which scene is running". There is no UI to call it
+from yet, and `AppConfig.ui.last_scene_id`
+([`storage/config.py`](../backend/storage/config.py)) is still unread — persisting the
+last selection is a UI concern and belongs with one
+([AF-L03](audit_findings.md#af-l03)).
 
-**Target:** the operator picks a scene from a list; the Scene Controller is the
-sole entry point for activation. There are no automatic, timed, or cue-stack
-transitions — this is a manually operated show. That constraint is deliberate and
-significantly simplifies the design; see
+There are no automatic, timed, or cue-stack transitions — this is a manually operated
+show. That constraint is deliberate and significantly simplifies the design; see
 [decisions.md](decisions.md#d-001-scene-is-the-top-level-manually-selected-unit).
 
 ---
 
 ## 3. Scene lifecycle
 
-**Target.** A scene has exactly three transitions:
+**Implemented.** A scene has exactly three transitions:
 
 ```mermaid
 stateDiagram-v2
@@ -64,38 +79,42 @@ There is no scene stack, no crossfade, and no layering in the intended design.
 
 ### 3.1 Activation sequence
 
-1. If a scene is active, run deactivation (§3.2) first.
-2. Read `Scene` → `Preset` → DMX cue list and WLED cue list from the `Library`.
+1. Read `Scene` → `Preset` → DMX cue list and WLED cue list from the `Library`.
    Resolution is read-only and happens once, at activation, not per beat.
-3. Validate: a cue list with zero entries is an activation error. The current code
-   already raises `StorageError` for this on the DMX side
-   ([`active.py:58-59`](../backend/runtime/active.py#L58-L59)) — that behaviour
-   should be preserved and surfaced to the operator rather than crashing the show.
-4. Push `scene.sensitivity` to the Audio Processor.
-5. Reset both sequencers: `index = 0`, `beats_elapsed = 0`.
-6. Apply cue index 0 on both paths **immediately**, without waiting for a beat. A
-   scene must produce light the moment it is selected, even in silence.
-7. Hand `scene.ilda_frame_list_id` to the ILDA Controller (which is a stub — see
-   [laser_and_haze_safety.md](laser_and_haze_safety.md)).
+2. Validate: a cue list with zero entries raises `StorageError` naming the scene and
+   the empty list, so the operator learns which list is unplayable.
+3. Build both sequencers with `index = 0`, `beats_elapsed = 0`.
+4. Apply cue index 0 on both paths **immediately**, without waiting for a beat.
 
-Step 6 is a real design decision and worth stating explicitly: **cue index 0 is
-applied on activation, not on the first beat.** Otherwise selecting a scene during
-a quiet passage produces darkness.
+Two properties worth stating explicitly because they are easy to get wrong:
+
+**Cue index 0 is applied on activation, not on the first beat.** Otherwise selecting a
+scene during a quiet passage produces darkness.
+
+**Validation happens before anything is swapped in.** Both sequencers are constructed
+before the controller mutates its own state, so a scene that fails to resolve leaves
+the previous one running rather than half-replacing it and leaving the rig in a state
+that matches no scene at all.
+
+`scene.sensitivity` is exposed as `SceneController.sensitivity` for an audio processor
+to read, rather than pushed. Nothing consumes it yet.
 
 ### 3.2 Deactivation
 
-**Target**, and currently undefined anywhere in the repository. The open question
-is the DMX policy:
+**Implemented as hold.** `deactivate()` stops sequencing and leaves the universe buffer
+exactly as it was, so there is no gap between scenes. It is idempotent — deactivating
+when nothing is active does nothing.
 
 | Policy | Behaviour | Trade-off |
 | --- | --- | --- |
 | **Hold** | Leave the universe buffer at the last look | No flicker between scenes; a stuck app leaves lights on |
 | **Blackout** | Zero the universe buffer | Predictable; produces a visible gap on every scene change |
-| **Hold, blackout on shutdown only** | Hold between scenes; zero on clean exit | Recommended |
+| **Hold, blackout on shutdown only** | Hold between scenes; zero on clean exit | **Chosen** |
 
-The recommended policy is the third. It is recorded as **proposed** in
-[decisions.md](decisions.md#d-011-hold-between-scenes-blackout-on-clean-shutdown)
-because the repository contains no evidence either way.
+`DmxOutput.blackout()` exists for the shutdown half, but nothing calls it yet: there is
+no process lifecycle to hang it off, and with no sender the buffer reaches no hardware
+either way. See
+[decisions.md](decisions.md#d-011-hold-between-scenes-blackout-on-clean-shutdown).
 
 The LEDfx side has no equivalent choice: LEDfx keeps rendering whatever preset it
 was last told to run. Deactivating a scene without telling LEDfx anything leaves
@@ -106,20 +125,16 @@ the strips lit. See
 
 ## 4. Sensitivity propagation
 
-**Current:** `Scene.sensitivity: float` ([`models/Scene.py:9`](../backend/models/Scene.py#L9))
-is persisted through `SceneRecord` and round-tripped by the library. Nothing reads
-it. There is a separate `AudioConfig.default_sensitivity: float = 0.5`
-([`storage/config.py:31`](../backend/storage/config.py#L31)) with no defined
-relationship to the scene field.
+**Current:** `Scene.sensitivity` is bounded to 0.0–1.0
+([`models/Scene.py`](../backend/models/Scene.py)), which closes
+[AF-M02](audit_findings.md#af-m02) — negatives and NaN no longer validate, and the
+schema 3 → 4 migration clamped any value already on disk. It is exposed as
+`SceneController.sensitivity` and read by nothing, because no audio processor exists.
 
-Two gaps worth fixing early:
-
-- **No bounds.** `sensitivity` has no `ge`/`le` constraint, so any float validates,
-  including negatives and NaN. See [AF-M02](audit_findings.md#af-m02).
-- **Undefined precedence.** Is `AudioConfig.default_sensitivity` a fallback for
-  scenes that omit the value (they cannot — it is required), a global multiplier,
-  or dead config? Unresolved; see
-  [audio_reactivity_architecture.md](audio_reactivity_architecture.md#51-sensitivity).
+One gap remains: **undefined precedence.** Is `AudioConfig.default_sensitivity` a
+fallback for scenes that omit the value (they cannot — it is required), a global
+multiplier, or dead config? Unresolved; see
+[audio_reactivity_architecture.md](audio_reactivity_architecture.md#51-sensitivity).
 
 **Target:** sensitivity flows one way only — Scene → Scene Controller → Audio
 Processor. The Audio Processor never reads the `Library`.
@@ -128,56 +143,72 @@ Processor. The Audio Processor never reads the `Library`.
 
 ## 5. Beat-driven sequencing
 
-**Target.** One `BeatSequencer` class, instantiated once per cue list. Its entire
-input is a stream of beat events; its entire output is a "cue changed" signal.
+**Implemented** as `CueSequencer` in
+[`runtime/sequencer.py`](../backend/runtime/sequencer.py), instantiated once per cue
+list. Its entire input is `on_beat()`; its entire output is the id of the cue to show,
+or `None` for "nothing changed". It holds no library reference and performs no I/O,
+which is what makes a show's timing testable without audio or hardware.
 
-State per instance: `entries`, `index`, `beats_elapsed`, `loop_mode`.
+State per instance: `entries`, `beats`, `loop`, `index`, `beats_elapsed`.
 
 ```mermaid
 sequenceDiagram
-    participant AP as Audio Processor
-    participant SEQ as BeatSequencer
-    participant OUT as Output Controller
+    participant BS as Beat Source
+    participant SC as Scene Controller
+    participant SEQ as CueSequencer
+    participant OUT as DmxOutput / WledOutput
 
-    AP->>SEQ: beat()
+    BS->>SC: on_beat()
+    SC->>SEQ: on_beat()
     SEQ->>SEQ: beats_elapsed += 1
-    alt beats_elapsed < entry.beats
-        SEQ-->>OUT: (nothing)
-    else threshold reached
+    alt beats_elapsed < beats
+        SEQ-->>SC: None
+    else count completed
         SEQ->>SEQ: beats_elapsed = 0, index = next(index)
-        SEQ-->>OUT: cue_changed(entry)
-        OUT->>OUT: apply
+        SEQ-->>SC: new cue id
+        SC->>OUT: apply(cue id)
     end
 ```
 
 ### 5.1 Switching rules
 
 - Advance **on** the beat that completes the entry's count, not the one after.
-- An entry with `beats <= 0` is a configuration error, not an infinitely-fast
-  advance. Reject it at load. Nothing validates this today.
+- A `beats` below 1 is a configuration error, not an infinitely-fast advance. It is
+  rejected by the model (`ge=1`) and again by the sequencer's constructor.
 - The two sequencers advance **independently**. A DMX cue list of 4 entries at 8
   beats each and a WLED cue list of 3 entries at 4 beats each are not synchronised
   beyond sharing the same beat stream, and are not expected to be.
+- A one-entry list reports no change, ever. It has nowhere to advance to, so the cue is
+  never re-applied — which matters most on the WLED side, where re-applying would mean
+  telling LEDfx to activate the scene it is already running, on every beat.
+- `entries` is a snapshot taken at activation, not a live view of the library, so
+  editing a cue list cannot disturb a running show.
 
 ### 5.2 Loop behaviour
 
-The intended default is loop-forever. A `hold-last` mode is worth supporting for
-cue lists meant to run once and settle. There is **no field for this in the data
-model today** — neither `DMX_Preset_List` nor `WLED_Preset_List` has a loop flag.
+`CueSequencer` supports both loop-forever (the default) and hold-last, where the list
+settles on its final cue and stops counting beats. **There is still no field for this
+in the data model** — neither `DMX_Preset_List` nor `WLED_Preset_List` has a loop flag,
+so the controller always builds looping sequencers. Adding the field is the only thing
+between hold-last and being usable.
 
 ### 5.3 Reset behaviour
 
-Reset means `index = 0, beats_elapsed = 0` and applying cue 0. It happens on:
-scene activation, cue-list reload (operator edited it), and explicit operator
-reset. It must **not** happen on BPM change or on temporary beat loss (§7, §8).
+Reset means `index = 0, beats_elapsed = 0` and applying cue 0. Activation gets this by
+construction, since it builds fresh sequencers. `CueSequencer.reset()` covers the other
+cases — cue-list reload after an operator edit, and explicit operator reset — though
+nothing calls it yet. It must **not** happen on BPM change or on temporary beat loss
+(§7, §8).
 
 ---
 
 ## 6. Concurrency and race conditions
 
-**Current:** no threads exist, and the two runtime singletons in
-[`runtime/active.py`](../backend/runtime/active.py) have no synchronisation. This
-is fine only because nothing runs.
+**Current:** no threads exist. The sequencing core is synchronous — a beat source calls
+`SceneController.on_beat()` on whatever thread it likes, and nothing guards that. The
+universe buffer in [`runtime/active.py`](../backend/runtime/active.py) is still a module
+global. This is survivable only because nothing else runs yet; a real beat source with
+its own audio thread makes every hazard below live.
 
 **Target:** the design will have at least three concurrent activities:
 
@@ -191,25 +222,25 @@ The hazards:
 
 1. **Torn universe reads.** The sender reading a 512-value buffer while the
    sequencer rewrites it can transmit a frame that is half old look, half new.
-   Mitigation: build the new buffer off to the side and swap the reference under a
-   lock, or guard the write with the same lock the sender takes. Note that
-   `update_active_dmx_channels` today *does* assign a freshly built list
-   ([`active.py:73-75`](../backend/runtime/active.py#L73-L75)) — with CPython's
-   GIL, that particular assignment is atomic. This is an accident of the
-   implementation, not a designed guarantee, and should be made explicit.
-2. **Scene change mid-beat.** A beat event arriving while the Scene Controller is
-   swapping cue lists could advance a sequencer that is being replaced. Mitigation:
-   activation takes the same lock as beat handling, or the sequencer is replaced
-   wholesale by reference rather than mutated.
-3. **Library edits during playback.** Deleting a look that the active DMX
-   sequencer is pointing at. `Library.delete` refuses by default when referrers
-   exist ([`library.py:324-329`](../backend/storage/library.py#L324-L329)), which
-   helps, but `force=True` cascades and can delete Scenes — see
-   [AF-H04](audit_findings.md#af-h04). The Scene Controller should hold resolved
-   snapshots, not live library references, so an edit cannot corrupt a running
-   show mid-cue.
-4. **LEDfx HTTP latency.** An API call must never run on the beat-handling thread.
-   A slow or hung LEDfx must not stall DMX output.
+   `DmxOutput.apply` builds the whole buffer to the side and then assigns it, so the
+   window is one reference swap — atomic under CPython's GIL. **Still unmitigated by
+   design rather than by accident:** there is no lock, and the guarantee rests on an
+   implementation detail of the interpreter.
+2. **Scene change mid-beat.** A beat arriving while the controller is swapping cue
+   lists could advance a sequencer that is being replaced. Partly mitigated: sequencers
+   are replaced wholesale by reference rather than mutated, and both are built before
+   either is installed. Not fully safe without a lock shared with beat handling.
+3. **Library edits during playback.** The Scene Controller now holds resolved
+   snapshots rather than live library references, so editing or deleting a cue list
+   cannot corrupt a running show mid-cue — the change simply takes effect at the next
+   activation. `force=True` deletes can still take a Scene down with a required parent
+   ([AF-H04](audit_findings.md#af-h04)), though optional references such as
+   `ilda_frame_list_id` are now detached instead.
+4. **LEDfx HTTP latency.** Still unmitigated: `WledOutput.apply` calls LEDfx
+   synchronously on whatever thread handled the beat. A hung LEDfx will stall beat
+   handling, and with it DMX. The timeout (`request_timeout_s`, default 2s) bounds the
+   damage but does not remove it. An API call must never run on the beat-handling
+   thread; moving it off is outstanding work.
 
 The single most useful concurrency rule: **the E1.31 sender must never block on
 anything except its own timer.**
@@ -241,15 +272,18 @@ sequencer: no events arrive. The correct behaviour is:
   system — it makes silence indistinguishable from music in the output and hides
   audio device failures.
 - **Audio failure must be visible.** A dead input device should surface in the UI,
-  not merely present as a static-looking show. Nothing in the repository logs
-  anything at all today ([AF-M08](audit_findings.md#af-m08)).
+  not merely present as a static-looking show. Logging exists now, but there is no UI
+  and no beat-source health signal, so this remains unaddressed.
+
+The first two are implemented and tested: with no beats, `SceneController` applies
+nothing after cue 0, and `ManualBeatSource` emits nothing at all while stopped.
 
 ---
 
 ## 9. Behaviour when the scene changes mid-sequence
 
-Deterministic and simple: the outgoing scene's sequence state is discarded
-entirely, and the incoming scene starts at index 0. Sequence state is never
+Deterministic and simple, and implemented: the outgoing scene's sequencers are dropped,
+and the incoming scene builds fresh ones starting at index 0. Sequence state is never
 preserved, restored, or resumed across scene changes.
 
 Rejected alternatives, for the record:
@@ -263,7 +297,14 @@ Rejected alternatives, for the record:
 
 ## 10. Testability
 
-The whole of §5 is a pure state machine over a beat stream and should be tested
-with a synthetic list of beat events and zero I/O. That is the highest-value test
-suite in the project and it can be written before any audio or transport code
-exists. See [current_sprint.md](current_sprint.md#ws-3--shared-beat-sequencing).
+§5 is a pure state machine over a beat stream, tested with synthetic beats and zero I/O
+in [`tests/test_sequencer.py`](../tests/test_sequencer.py) — no audio device, no socket,
+no LEDfx. [`tests/test_scene_controller.py`](../tests/test_scene_controller.py) covers
+the wiring the same way, using a recording output to assert the exact sequence of cues a
+run of beats produces, and `ManualBeatSource` to drive it.
+
+This is what makes show timing verifiable before any hardware exists: the questions
+"does an 8-beat cue advance on beat 8" and "does switching scenes reset the index" are
+answered by tests that run in milliseconds. Two things it cannot cover, because they are
+properties of a running process rather than of the state machine: concurrency (§6) and
+whether real beat detection is accurate.
