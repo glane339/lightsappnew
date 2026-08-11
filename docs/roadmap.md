@@ -81,18 +81,18 @@ runtime code.
 **Risks.**
 - Four-place edits per field ([AF-M04](audit_findings.md#af-m04)) make a missed
   converter update plausible. Mitigated by storage round-trip tests.
-- Show-control model under review — WS-2 parked in [current_sprint.md](current_sprint.md).
 
 **Dependencies.** Phase 6 (testing) substantially complete; phase 1 done.
 
-**Status.** **Partially done** — WLED list registration and `Preset.wled_preset_list_id`
-landed (schema v2). Fixture model, per-entry beats, and validation remain **parked**.
+**Status.** **Partially done** — fixture model and WLED list registration landed
+(schema v2–v3). Schema v4 added list-level `beats` and bounded `sensitivity`.
+Per-entry beats and `channel_values` clamping remain open.
 
 ---
 
 ## Phase 3 · Shared beat-sequencing engine
 
-**Scope.** One `BeatSequencer` instantiated per cue list; a Scene Controller owning
+**Scope.** One `CueSequencer` instantiated per cue list; a Scene Controller owning
 activation, deactivation, sensitivity propagation, and sequencer lifecycle; runtime
 state moved out of module globals into an owned object with locking.
 
@@ -113,7 +113,12 @@ and WLED sequencing drift apart
 Guard by keeping the sequencer's consumer abstract and testing it with neither
 output present.
 
-**Dependencies.** Phase 2.
+**Dependencies.** Phase 2 (list-level beats).
+
+**Status.** **Mostly done** — `CueSequencer`, `SceneController`, `DmxOutput`,
+`WledOutput`, and `BeatSource`/`ManualBeatSource` are implemented and tested.
+Remaining: move `active_dmx_channels` out of module globals and add locking
+([AF-M03](audit_findings.md#af-m03)); wire into an entry point.
 
 ---
 
@@ -203,6 +208,10 @@ a test that omits `root` will mutate real data. Make the temp-root fixture the o
 way tests construct a `Library`.
 
 **Dependencies.** None. Should start immediately and precede phase 2.
+
+**Status.** **Substantially done** — 84 tests covering storage, migrations, DMX
+devices, sequencer, scene controller, and outputs. LEDfx client/sync still uncovered.
+App entry point and end-to-end in-process integration remain future work.
 
 ---
 

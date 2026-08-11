@@ -26,30 +26,31 @@ remote-access requirement in the repository today.
 
 ## Current maturity
 
-> **The repository is a persistence layer with an unwired LEDfx adapter. It is not
-> yet a running show application.**
+> **The repository has a persistence layer, a beat-driven show-control core, and an
+> unwired LEDfx adapter. It is not yet a running show application** — nothing wires
+> beats to scenes, nothing transmits DMX, and there is no entry point or UI.
 
-There is no entry point, no server, and no UI. Audio input and DMX network output
-are absent. A pytest storage suite and an optional LEDfx HTTP client exist; nothing
-is wired into a show loop.
+There is no app entry point, no server, and no UI. Real audio capture and DMX network
+output are absent. A pytest suite covers storage, sequencing, and outputs; the LEDfx
+HTTP client exists but is not wired into a live process.
 
 | Layer | Status | Evidence |
 | --- | --- | --- |
-| Persistence / storage | **Substantially implemented** | [`backend/storage/`](../backend/storage/) — schema v2, migrations, integrity |
-| Data model | **Partially implemented** | 12 models; `DMX_Device` and `WLED_Preset_List` registered; per-entry beats still absent |
-| Runtime state | **Prototype seed (82 lines)** | [`backend/runtime/active.py`](../backend/runtime/active.py) |
-| Scene controller | **Absent** | no equivalent module |
-| Audio / BPM / beat detection | **Absent (configuration placeholders only)** | `AudioConfig` and `Scene.sensitivity` persist settings; no signal processing |
+| Persistence / storage | **Substantially implemented** | [`backend/storage/`](../backend/storage/) — schema v4, migrations, integrity |
+| Data model | **Mostly implemented** | 12 models; `DMX_Device` and cue-list `beats` per list; per-*entry* beats still absent |
+| Runtime / sequencing | **Core implemented, unwired** | [`runtime/scene_controller.py`](../backend/runtime/scene_controller.py), [`sequencer.py`](../backend/runtime/sequencer.py), [`outputs.py`](../backend/runtime/outputs.py) |
+| Beat source boundary | **Protocol only** | [`audio/beat_source.py`](../backend/audio/beat_source.py) — manual/scripted beats; no detector |
+| Audio / beat detection | **Absent** | `AudioConfig` and `Scene.sensitivity` persist settings; no signal processing |
 | DMX transport (E1.31/sACN) | **Absent** | no sACN/E1.31 sender |
 | WLED / LEDfx integration | **Client exists, unwired** | [`backend/ledfx/`](../backend/ledfx/); `LedfxConfig.enabled` defaults false |
 | ILDA processing | **Storage only** | [`.ild` blob store](../backend/storage/ilda_blobs.py); nothing parses or plays |
 | UI / frontend | **Absent** | no `frontend/` directory |
-| Tests | **Storage suite (32 tests)** | [`tests/`](../tests/), `pytest.ini` |
+| Tests | **84 tests** | storage, migrations, DMX devices, sequencer, scene controller, outputs |
 | CI | **Absent** | no workflow files |
 | Logging | **Implemented** | [`backend/logging_setup.py`](../backend/logging_setup.py); storage events log to `logs/` |
 
-Roughly 1,500+ lines of Python across backend and tests; the storage layer remains
-the largest single subsystem.
+Roughly 2,000+ lines of Python across backend and tests; storage remains the largest
+single subsystem, with runtime sequencing now the second.
 
 ---
 
@@ -85,9 +86,10 @@ What the code actually does today:
 - Enforces referential integrity across the object graph on load, on save, and on
   insert; supports cascade delete, orphan pruning, and referrer lookup —
   [`storage/library.py`](../backend/storage/library.py).
-- Versions the data folder (schema **v3**), snapshots before migrating, wraps legacy
-  `Preset.wled_preset_id` values into one-entry WLED lists, and synthesises
-  `DMX_Device` rows from the old positional `order` —
+- Versions the data folder (schema **v4**), snapshots before migrating, wraps legacy
+  `Preset.wled_preset_id` values into one-entry WLED lists, synthesises
+  `DMX_Device` rows from the old positional `order`, and lifts cue-list beat counts
+  to a usable default —
   [`storage/migrations.py`](../backend/storage/migrations.py).
 - Exports/imports the whole data folder as a zip, with zip-slip protection —
   [`storage/archive.py`](../backend/storage/archive.py).
@@ -96,9 +98,16 @@ What the code actually does today:
 - Resolves a look into a 512-value DMX buffer using each device's patched start
   address, rejecting overlaps and out-of-universe devices —
   [`runtime/active.py`](../backend/runtime/active.py).
+- Activates a scene, runs two independent cue sequencers off a beat stream, and
+  applies looks to the universe buffer and LEDfx scenes —
+  [`runtime/scene_controller.py`](../backend/runtime/scene_controller.py),
+  [`runtime/sequencer.py`](../backend/runtime/sequencer.py),
+  [`runtime/outputs.py`](../backend/runtime/outputs.py).
+- Emits beats via a `BeatSource` protocol with a manual implementation for tests —
+  [`audio/beat_source.py`](../backend/audio/beat_source.py).
 - Polls LEDfx for scene names and upserts `WLED_Preset` rows when enabled —
   [`ledfx/scene_sync.py`](../backend/ledfx/scene_sync.py).
-- Runs a pytest storage suite against temp data roots — [`tests/`](../tests/).
+- Runs a pytest suite against temp data roots — [`tests/`](../tests/).
 
 ## Major incomplete areas
 
@@ -108,13 +117,16 @@ Ranked by how much they block a working system:
    [`runtime/active.py`](../backend/runtime/active.py) buffers a single universe and
    raises for anything else. Multi-universe needs per-universe buffers. See
    [fixture_and_transport_strategy.md](fixture_and_transport_strategy.md).
-2. **Beat-driven sequencing is not represented.** `DMX_Preset_List` has no beat
-   field; `WLED_Preset_List.beats` is a single scalar on the whole list, not per
-   entry. No sequencer or show loop consumes either.
-3. **No audio processor**, so `Scene.sensitivity` is persisted but never read.
-4. **No DMX output transport.** LEDfx HTTP exists but is not wired to cue changes.
-5. **Show-control architecture under review.** WS-2/3/4 in
-   [current_sprint.md](current_sprint.md) are parked pending a redesigned model.
+2. **Per-entry beat duration is still absent.** Both cue lists carry one `beats`
+   scalar for the whole list (schema v4); the sequencers are built and tested against
+   that shape. Variable hold times per cue entry remain future work
+   ([AF-H02](audit_findings.md#af-h02)).
+3. **No real beat detection** — the beat source is manual/scripted only; nothing
+   reads live audio or calls `SceneController.on_beat()` from a process.
+4. **No DMX output transport.** LEDfx HTTP is invoked from `WledOutput` in tests
+   but nothing runs a show loop against a live LEDfx instance.
+5. **No entry point.** The show-control core is library code only; nothing
+   subscribes a beat source, starts a sender, or exposes an operator UI.
 
 ## System boundaries
 

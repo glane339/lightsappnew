@@ -55,14 +55,18 @@ runtime. There is no concept of layering two scenes.
 **Alternatives.** A cue stack with fades (rejected: unnecessary for the target
 installation); timecode-driven playback (rejected: no timecode source).
 
-**Follow-up.** Scene *activation* is not implemented — only the model exists. See
+**Follow-up.** Scene activation is implemented in
+[`runtime/scene_controller.py`](../backend/runtime/scene_controller.py); an app
+entry point that calls it is not. See
 [show_control_architecture.md](show_control_architecture.md#3-scene-lifecycle).
 
 ---
 
 ## D-002: Audio processing owns timing, not lighting decisions
 
-**Status:** Proposed — no audio code exists.
+**Status:** Partially implemented — [`audio/beat_source.py`](../backend/audio/beat_source.py)
+defines the boundary (`BeatSource` protocol, `ManualBeatSource`); no signal
+processing or live capture exists.
 
 **Context.** The audio subsystem could plausibly be given responsibility for
 "reacting" — mapping levels straight to channel values. The intended design says it

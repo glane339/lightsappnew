@@ -4,7 +4,7 @@
 **Audit baseline includes:** `ddcadf8` (DMX_Device fixture architecture) and `7ece72d` (WLED preset-list correction)
 **Audit branch:** `docs/fable-v2-repository-audit` (content identical to `main` plus this document)
 **Audit date:** 2026-08-10 (updated the same day for `ddcadf8`)
-**Auditor:** Claude (Fable 5), full-repository read — every backend source file (27), every test (9 files, 50 cases), all 16 docs (including the new `docs/fixtures/` set), `README.md`, `AGENTS.md`, `requirements.txt`, `pytest.ini`, `.gitignore`. Test suite executed and passing.
+**Auditor:** Claude (Fable 5), full-repository read — every backend source file (31), every test (12 files, 84 cases at last update), all 16 docs (including the new `docs/fixtures/` set), `README.md`, `AGENTS.md`, `requirements.txt`, `pytest.ini`, `.gitignore`. Test suite executed and passing at audit time (50 cases).
 
 This document supersedes Audit v1 (written at commit `691062e`) and updates the
 first Audit v2 pass (written before `ddcadf8`). Every v1 finding is reconciled in
@@ -13,13 +13,15 @@ keep their `AF-*` IDs and Audit-v2 findings carry `AF2-*` IDs.
 
 > **Updates since audit (Aug 2026).** The following findings are partially or fully
 > addressed on current `main`: **AF-H03** (WLED list registered;
-> `Preset.wled_preset_list_id`; `WLED_Preset.id` = scene name), **AF-H05** (32-test
-> storage suite), **AF-M07** (config split documented), **AF-M08** (logging),
-> **AF-L02** (requirements cleaned), **AF-H01** (`DMX_Device` collection and
-> address-based resolution). **AF-H02** is now partly resolved: cue lists carry a beat
-> count per list, which unblocked sequencing; per-*entry* beats remain open. **AF-M02**
-> and **AF-M06** are resolved, **AF-M05** partly. Multi-universe output remains open, as
-> does WS-4 (E1.31 transport). WS-3 is unparked and built.
+> `Preset.wled_preset_list_id`; `WLED_Preset.id` = scene name), **AF-H05** (84-test
+> suite including storage, sequencing, and outputs), **AF-M07** (config split documented),
+> **AF-M08** (logging), **AF-L02** (requirements cleaned), **AF-H01** (`DMX_Device`
+> collection and address-based resolution). **AF-H02** is now partly resolved: both cue
+> lists carry a `beats` scalar per list (schema v3 → 4), which unblocked sequencing;
+> per-*entry* beats remain open. **AF-M02** and **AF-M06** are resolved, **AF-M05**
+> partly. **WS-3** is built (`CueSequencer`, `SceneController`, `BeatSource` protocol,
+> `DmxOutput`/`WledOutput`). Multi-universe output remains open, as does WS-4 (E1.31
+> transport). No app entry point wires any of it yet.
 
 Severity reflects impact **on this project at its current stage** — a pre-runtime
 repository with no deployment, no users, and no hardware output. Nothing here is
@@ -33,7 +35,7 @@ three findings that actually matter.
 | [AF-H02](#af-h02) | High | Beat duration is absent from the persisted model | ~~Yes~~ **Partly resolved** |
 | [AF-H03](#af-h03) | High | `WLED_Preset_List` unreachable; `WLED_Preset` carries no LEDfx id | ~~Yes~~ **Resolved** |
 | [AF-H04](#af-h04) | High | Force-delete cascade can silently destroy Scenes and user files | No |
-| [AF-H05](#af-h05) | High | No tests of any kind | ~~Yes~~ **Resolved** (storage) |
+| [AF-H05](#af-h05) | High | No tests of any kind | ~~Yes~~ **Resolved** (storage + runtime) |
 | [AF-M01](#af-m01) | Medium | DMX channel values are never range-checked or clamped | No |
 | [AF-M02](#af-m02) | Medium | `sensitivity` and other numeric fields are unbounded | ~~No~~ **Resolved** |
 | [AF-M03](#af-m03) | Medium | Runtime state is module-global with no concurrency story | No |
@@ -75,21 +77,21 @@ defaults to a valid 1, and `host`/`port`/`priority` were recovered from the
 previous app's config — **AF-M06 is RESOLVED**, though none of it is verified
 against the physical universe box yet.
 
-**The blocker list has therefore changed.** The top structural blocker is now the
-cue-list schema: **per-entry beat duration (AF-H02) is the only remaining data-
-model gap** on the path to a sequencer — `WLED_Preset_List.beats` is still one
-scalar for the whole list (defaulting to 0) and `DMX_Preset_List` has no beat
-field. Second is the **LEDfx sync concurrency defect (AF2-H01)**: the background
-thread still mutates and saves the whole `Library` unsynchronized, and must be
-restructured before any show loop shares that library. Third is the absence of
-the runtime itself (sequencer, ShowController) — now purely *missing* work rather
-than *blocked* work, since the schema underneath DMX is finally right.
+**The blocker list has therefore changed.** The top structural gap is now **per-entry
+beat duration (AF-H02)** — both cue lists carry one `beats` scalar per list (schema
+v4), and sequencers are built against that, but variable hold times per cue entry
+are still unrepresentable. Second is the **LEDfx sync concurrency defect (AF2-H01)**:
+the background thread still mutates and saves the whole `Library` unsynchronized, and
+must be restructured before any live process shares that library. Third is the
+absence of an **app entry point and transports** — the show-control core exists as
+library code, but nothing subscribes beats, sends DMX, or runs LEDfx sync in one
+process.
 
 The shortest safe path to a first hardware-driven show is now:
-**LEDfx regression protection (tests + thread hygiene) → per-entry cue schema
-(v4) → shared BeatSequencer → scripted audio-event boundary → ShowController →
-LEDfx wiring → E1.31 via the `sacn` library → hardware bring-up.** Fixture
-identity no longer appears on the roadmap as work to do — only as work to
+**LEDfx regression protection (tests + thread hygiene) → entry point wiring beat
+source → controller → null/recording DMX sender → E1.31 via the `sacn` library →
+hardware bring-up.** Per-entry cue schema can wait until a real show needs it.
+Fixture identity no longer appears on the roadmap as work to do — only as work to
 protect. Details in
 [§ Recommended Implementation Order](#recommended-implementation-order).
 
@@ -106,11 +108,11 @@ protect. Details in
 | Python (documented) | 3.12+ (README) |
 | Python (present) | `.venv/` at repo root, **Python 3.12.10**; README/AGENTS still say `venv/` ([AF2-L03](#af2-l03)) |
 | Dependencies | `httpx==0.28.1`, `platformdirs==4.11.0`, `pydantic==2.13.4`, `pytest==9.1.1` — all direct, all used |
-| Test suite | **50 tests, all passing** (`.venv\Scripts\python.exe -m pytest`, ~3.3 s) |
-| Schema version | **3** (`storage/migrations.py`), with registered steps 1→2 (WLED lists) and 2→3 (DMX devices) |
+| Test suite | **84 tests, all passing** (`.venv\Scripts\python.exe -m pytest`, ~3.5 s) |
+| Schema version | **4** (`storage/migrations.py`), with registered steps 1→2 (WLED lists), 2→3 (DMX devices), 3→4 (cue-list beats, sensitivity clamp) |
 | CI | None |
-| Entry points | Still no app entry point. `backend/seed_devices.py` is the first runnable script (a one-shot setup utility, not a runtime) |
-| Source inventory | `backend/`: 12 models, 8 storage modules, 1 runtime module, 3 ledfx modules, 1 config module, `logging_setup.py`, `seed_devices.py`. `tests/`: 9 files. `docs/`: 13 architecture docs + 3 fixture docs |
+| Entry points | Still no app entry point. `backend/seed_devices.py` is a one-shot setup utility; show-control modules are library code only |
+| Source inventory | `backend/`: 12 models, 8 storage modules, 4 runtime modules, 1 audio module, 3 ledfx modules, 1 config module, `logging_setup.py`, `seed_devices.py`. `tests/`: 12 files. `docs/`: 13 architecture docs + 3 fixture docs |
 
 Repository-wide searches re-run at HEAD (excluding `.venv/`):
 
@@ -138,11 +140,11 @@ roots, the conftest graph, and the docs — the same full-thickness discipline t
 WLED correction showed, and further evidence the storage design carries schema
 change well.
 
-What remains is no longer *wrong structure* but *missing structure*: the cue-list
-entry shape (the last schema gap), and the entire runtime layer (sequencer,
-controller, transports). The LEDfx adapter is still a good HTTP boundary with a
-bad library-side habit (AF2-H01). Validation of channel *values* (0–255) is still
-absent even though addresses are now bounded.
+What remains is no longer *wrong structure* but *missing wiring and transports*:
+per-entry cue shape (deferred — list-level `beats` unblocked sequencing), an app
+entry point, E1.31 output, and real beat detection. The LEDfx adapter is still a
+good HTTP boundary with a bad library-side habit (AF2-H01). Validation of channel
+*values* (0–255) is still absent even though addresses are now bounded.
 
 ---
 
@@ -150,21 +152,22 @@ absent even though addresses are now bounded.
 
 What actually executes today, end to end:
 
-1. `Library.open(root)` → layout, migration to schema v3 (snapshot first),
-   ten collections loaded, integrity checked, ILDA folder reconciled.
+1. `Library.open(root)` → layout, migration to schema v4 (snapshot first),
+   ten collections loaded, integrity checked; ILDA folder sync is opt-in.
 2. `python backend/seed_devices.py` → seeds the two-fixture basement patch
    (GigBAR 2 at 1–23, Keobin bar at 25–42, universe 1) idempotently, and prints
    the patch table.
-3. `update_active_dmx_channels(library, scene_id, index)` → resolves
-   Scene → Preset → DMX cue list → chosen look, then flattens each device preset
-   into the 512-value buffer **at its device's patched address**, zero-filling
-   gaps, rejecting overlaps, universe ≠ 1, and past-512 patches.
-4. If `ledfx.enabled` were true: the LEDfx client/sync stack could poll scenes —
-   still nothing calls `build_ledfx_stack()`.
+3. `SceneController.activate(scene_id)` → resolves scene → preset → both cue lists,
+   applies cue 0 to the DMX universe buffer and LEDfx (via injected outputs).
+4. `SceneController.on_beat()` → advances both sequencers independently; changed
+   cues go to `DmxOutput` and `WledOutput`.
+5. `ManualBeatSource` → protocol + scripted beats for tests; no real detector.
+6. If `ledfx.enabled` were true in a future entry point: the LEDfx client/sync
+   stack could poll scenes — still nothing calls `build_ledfx_stack()` today.
 
-Nothing picks the cue index, nothing transmits the buffer, nothing activates a
-LEDfx scene. The repository remains a persistence layer plus adapters — but the
-DMX half of the model is now show-ready.
+Nothing transmits the universe buffer, nothing runs the controller from a live
+process, and nothing captures audio. The show-control *core* is implemented and
+tested; the *application* around it is not.
 
 ---
 
@@ -173,9 +176,10 @@ DMX half of the model is now show-ready.
 Unchanged from the previous assessment: the documented target (operator → Scene
 → {sensitivity → audio engine → beats; Preset → DMX cue list + WLED cue list;
 ILDA frame list} → shared sequencer → E1.31 box / LEDfx) remains the right
-shape, and the repository is converging on it. After `ddcadf8`, the only place
-the schema still actively fights the intent is the cue-list entry shape
-(AF-H02). Everything else absent is absent, not wrong.
+shape, and the repository is converging on it. The cue-list *entry* shape
+(per-entry beats) is deferred; list-level `beats` and the sequencing core are
+in place. What remains absent is absent at the integration layer, not in the
+core logic.
 
 ---
 
@@ -350,16 +354,16 @@ scalar `beats = 0`) — that is AF-H02, the top blocker below.
 
 ## Top Blocking Findings
 
-1. **AF-H02 (v1, OPEN) — no per-entry beat duration.** Now the *only* remaining
-   schema gap on the critical path. `WLED_Preset_List.beats` is one scalar
-   (default 0, an invalid duration); `DMX_Preset_List` has no beat field. No
-   sequencer can be built until cue entries carry `{target_id, beats ≥ 1}`.
+1. **AF-H02 (v1, PARTLY RESOLVED) — per-entry beat duration still open.** Both cue
+   lists now carry one `beats` scalar per list (schema v4, `ge=1`); sequencers are
+   built and tested against that. Variable hold times per cue entry remain
+   unrepresentable — deferred until a real show needs them.
 2. **AF2-H01 (OPEN) — LEDfx sync thread mutates and saves the whole Library
-   unsynchronized.** Must be restructured before any show loop or UI shares the
+   unsynchronized.** Must be restructured before any live process shares the
    `Library`. Unchanged since the previous pass.
-3. **Runtime absence** — BeatSequencer, ShowController, audio-event boundary.
-   No longer blocked by schema on the DMX side; blocked only by AF-H02 for the
-   cue shape. This is the work itself, ordered in the roadmap below.
+3. **Integration absence** — no entry point, no E1.31 sender, no real beat
+   detector. The show-control core (`SceneController`, `CueSequencer`, outputs,
+   `BeatSource` protocol) is library code only.
 
 ~~Fixture identity (AF-H01)~~ — resolved by `ddcadf8`; removed from this list.
 
@@ -713,15 +717,18 @@ folders and do not conflict.
 
 ## Testing Assessment
 
-**Current baseline: 50 tests, all passing** (previous claim of 32 is obsolete).
-Breakdown by file, verified by reading every test:
+**Current baseline: 84 tests, all passing** (50 at audit time; sequencing and
+outputs added since). Breakdown by file, verified by reading every test:
 
 | Suite | Tests | Covers |
 | --- | --- | --- |
-| `test_library.py` | 10 | Round-trip (incl. WLED list), dangling refs (add + on-disk), delete/force-cascade/unlink, pruning, duplicate ids, WLED list storability |
-| `test_migrations.py` | 9 | Version handling (fresh/current/future/missing step), snapshot layout, v1→v2 WLED wrap, v2→v3 device synthesis, widest-count-wins, malformed rejection |
-| `test_dmx_devices.py` | 11 | Device round-trip, address bounds, dangling `device_id`, prune survival, delete/cascade, **runtime resolution**: gaps, padding/truncation, overlap, past-512, universe ≠ 1 |
+| `test_library.py` | 13 | Round-trip (incl. WLED list), dangling refs (add + on-disk), delete/force-cascade/unlink, pruning, duplicate ids, WLED list storability, optional ILDA detach |
+| `test_migrations.py` | 11 | Version handling, snapshot layout, v1→v2 WLED wrap, v2→v3 device synthesis, v3→v4 beats/sensitivity, malformed rejection |
+| `test_dmx_devices.py` | 11 | Device round-trip, address bounds, dangling `device_id`, prune survival, delete/cascade, runtime resolution |
 | `test_seed_devices.py` | 4 | Documented patch, idempotency, reload survival, seeded non-overlap through `build_channels` |
+| `test_sequencer.py` | 11 | Beat advance, loop, hold-last, reset, one-entry no-emit |
+| `test_scene_controller.py` | 13 | Activation, deactivation, beat advance, empty-list errors, failed activation preserves prior scene |
+| `test_outputs.py` | 5 | DmxOutput buffer swap, WledOutput swallows LedFxError |
 | `test_json_store.py` | 5 | Atomic write round-trip, quarantine (4 modes), envelope |
 | `test_ilda.py` | 7 | Id traversal, import/path, folder sync both directions, blob delete, missing blob, collision suffixing |
 | `test_archive.py` | 3 | Export/import round-trip, zip-slip, log/backup exclusion |
@@ -734,15 +741,17 @@ suite.
 
 | Area | Status |
 | --- | --- |
-| Storage / migration (both steps) | ✅ current |
-| DMX device model + persistence | ✅ current (new) |
-| DMX runtime resolution | ✅ current (new — closes the previous gap) |
-| Seed / patch | ✅ current (new) |
+| Storage / migration (all steps through v4) | ✅ current |
+| DMX device model + persistence | ✅ current |
+| DMX runtime resolution | ✅ current |
+| Seed / patch | ✅ current |
+| Cue sequencer | ✅ current (WS-3) |
+| Scene controller + outputs | ✅ current (WS-3) |
+| Beat source boundary | ✅ protocol + manual impl |
 | LEDfx client / sync | ❌ still zero ([AF2-M03](#af2-m03)) |
-| Cue sequencer | — future (schema first) |
-| Audio contract | — future |
-| E1.31 transport | — future |
-| ShowController | — future |
+| Real beat detection | — future (WS-9) |
+| E1.31 transport | — future (WS-4) |
+| App entry point | — future |
 
 Strategy unchanged: unit tests for the sequencer as a pure state machine
 (highest-value future suite); `httpx.MockTransport` for the LEDfx client now;
@@ -791,15 +800,15 @@ Remaining drift at HEAD, all cosmetic:
 | Previous ID | Previous Finding | Status | Current Evidence | Replacement |
 | --- | --- | --- | --- | --- |
 | AF-H01 | No fixture identity; positional DMX addressing | **RESOLVED** (`ddcadf8`) | `DMX_Device` root collection; `device_id` on presets; address-based `build_channels` with overlap/universe/past-end rejection; v2→v3 migration; 18 tests. Multi-universe *buffering* deliberately deferred (universe stored, validated, rejected if ≠ 1) — a limitation, not a reopening | — |
-| AF-H02 | Beat duration absent from persisted model | **OPEN — top blocker** | `WLED_Preset_List.beats` scalar default 0; `DMX_Preset_List` has no beat field | — (P1) |
+| AF-H02 | Beat duration absent from persisted model | **PARTLY RESOLVED** (schema v4) | Both cue lists carry `beats` per list (`ge=1`); sequencers built; per-*entry* beats still absent | WS-3.5 when needed |
 | AF-H03 | `WLED_Preset_List` unreachable; no LEDfx id; asymmetric Preset | **RESOLVED** (`7ece72d`) | Re-validated at HEAD; WLED tests pass unchanged | — |
-| AF-H04 | Force-delete cascade blast radius, no dry-run | **OPEN** | [library.py:349-407](../backend/storage/library.py#L349-L407) unchanged; cascade logs | — (before UI) |
-| AF-H05 | No tests of any kind | **PARTIALLY RESOLVED** | 50-test suite (storage, migrations, DMX devices/runtime, seed); LEDfx still uncovered | [AF2-M03](#af2-m03) |
-| AF-M01 | DMX channel values unclamped | **OPEN** | `channel_values: List[int]` unbounded on model and record; resolution pads/truncates length only. Addresses are now bounded; values are not | — (P1) |
-| AF-M02 | `sensitivity` unbounded | **OPEN** | No `ge`/`le` on model or record | — (P1) |
-| AF-M03 | Module-global runtime state, no concurrency story | **OPEN** | [active.py:24-25](../backend/runtime/active.py#L24-L25); concurrency exists via LEDfx sync | [AF2-H01](#af2-h01) extends |
+| AF-H04 | Force-delete cascade blast radius, no dry-run | **OPEN** | [library.py:349-407](../backend/storage/library.py#L349-L407) unchanged; cascade logs; optional ILDA detach on delete | — (before UI) |
+| AF-H05 | No tests of any kind | **RESOLVED** (storage + runtime) | 84-test suite; LEDfx still uncovered | [AF2-M03](#af2-m03) |
+| AF-M01 | DMX channel values unclamped | **OPEN** | `channel_values: List[int]` unbounded on model and record | — |
+| AF-M02 | `sensitivity` unbounded | **RESOLVED** (schema v4) | `Scene.sensitivity` bounded 0.0–1.0; migration clamps on-disk values | — |
+| AF-M03 | Module-global runtime state, no concurrency story | **OPEN** | `active_dmx_channels` module global remains; `DmxOutput` accepts injection | [AF2-H01](#af2-h01) extends |
 | AF-M04 | Model/record four-place edits | **OPEN** (accepted cost) | Both `7ece72d` and `ddcadf8` paid it correctly in all four places | — |
-| AF-M05 | `Library.load()` writes to disk | **OPEN** (documented, accepted) | Unchanged | — |
+| AF-M05 | `Library.load()` writes to disk | **PARTLY RESOLVED** | `sync_ilda` defaults false; construct still runs migrate/ensure_config | — |
 | AF-M06 | `DMXConfig.universe` defaults to 0 | **RESOLVED** (`ddcadf8`) | `universe = 1 (ge=1, le=63999)`; `host`/`port`/`priority` added, recovered from the old app's config — explicitly **unverified against the box** | — |
 | AF-M07 | Empty duplicate config module | **RESOLVED** | Compile-time defaults module, documented | — |
 | AF-M08 | No logging | **RESOLVED** | `logging_setup.py` + storage/ledfx/seed logging; no entry point calls it yet (none exists) | — |
@@ -1063,7 +1072,7 @@ touched.
 ```text
 git branch / rev-parse         → docs/fable-v2-repository-audit @ 45dbf9b0
 .venv\Scripts\python --version → Python 3.12.10
-.venv\Scripts\python -m pytest → 50 passed in ~3.3s
+.venv\Scripts\python -m pytest → 84 passed (50 at audit time)
 grep "order" (device presets)  → live model/record clean; migration + tests + history only
 grep wled_preset_id (non-list) → migration code/tests/historical docs only
 grep threading|socket|sacn|asyncio → threading only in ledfx/scene_sync.py; no transport code
@@ -1076,12 +1085,14 @@ git diff 7ece72d ddcadf8       → reviewed in full (25 files, +1047/−123)
 DMX_Device_Preset, **DMX_Device**, WLED_Preset_List, WLED_Preset,
 ILDA_Frame_List, ILDA_Frame, Active_DMX_Channels, Active_ILDA_Frame ·
 **backend/storage/** records, library, json_store, migrations, paths, config,
-archive, ilda_blobs · **backend/runtime/** active · **backend/ledfx/** client,
+archive, ilda_blobs · **backend/runtime/** active, sequencer, outputs,
+scene_controller · **backend/audio/** beat_source · **backend/ledfx/** client,
 scene_sync, service · **backend/config/** config · **backend/** logging_setup,
 **seed_devices** ·
 **tests/** conftest, test_library, test_migrations, **test_dmx_devices**,
 **test_seed_devices**, test_json_store, test_archive, test_ilda,
-test_logging_setup ·
+test_logging_setup, **test_sequencer**, **test_scene_controller**,
+**test_outputs** ·
 **docs/** all 13 architecture docs + **fixtures/README, chauvet_gigbar_2,
 keobin_light_bar** · **root:** README.md, AGENTS.md, requirements.txt,
 pytest.ini, .gitignore.

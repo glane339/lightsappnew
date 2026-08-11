@@ -116,7 +116,7 @@ The application stores nothing inside the repository. Layout, from
 
 ```text
 %LOCALAPPDATA%\LightsApp\          (Windows; platformdirs picks the equivalent elsewhere)
-├── config.json                    AppConfig — dmx / ledfx / ilda / audio / ui (schema v3)
+├── config.json                    AppConfig — dmx / ledfx / ilda / audio / ui (schema v4)
 ├── data/                          one JSON file per collection
 │   ├── scenes.json
 │   ├── presets.json
@@ -173,9 +173,11 @@ the user's `config.json`, which lives outside the working tree.
 
 ## Audio devices
 
-**No audio code exists**, so there is no requirement today.
-`AudioConfig.input_device: Optional[str]` ([`storage/config.py:30`](../backend/storage/config.py#L30))
-is the only placeholder and is unread.
+**No live audio capture exists**, but the beat-source boundary is implemented:
+[`audio/beat_source.py`](../backend/audio/beat_source.py) defines the protocol and a
+manual implementation for tests. `AudioConfig.input_device: Optional[str]`
+([`storage/config.py:30`](../backend/storage/config.py#L30)) is the placeholder for a
+future detector and is unread today.
 
 The decision that matters for this deployment, when the work starts: if the music
 plays on the same PC, capturing it requires **WASAPI loopback**, not a line-in
@@ -237,8 +239,9 @@ required to develop against the current codebase:
 
 ## Development versus production
 
-There is currently no meaningful difference, because there is no runtime. The
-distinction that should be established as output components are built:
+There is currently no production runtime process, but the show-control core is
+implemented as library code. The distinction that should be established as output
+components are wired into an entry point:
 
 | | Development | Production (basement) |
 | --- | --- | --- |

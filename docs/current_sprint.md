@@ -80,12 +80,11 @@ pruning logic is the code most likely to break under model changes. WS-6.1 is
 
 ---
 
-## WS-2 · Scene and preset model — **PARTLY PARKED**
+## WS-2 · Scene and preset model
 
-> **2.1 (devices) and 2.3 (WLED lists) are done.** The remaining items — per-entry
-> beat durations (2.2) and field validation beyond device addresses (2.4) — assume a
-> shared beat-sequenced cue architecture that is under reconsideration, and stay
-> parked until the show-control model is redesigned.
+> **2.1 (devices), 2.3 (WLED lists), and list-level `beats` (schema v4) are done.**
+> Per-entry beat durations (2.2) remain deferred. Field validation (2.4) is partly
+> done — `sensitivity` and `beats` are bounded; `channel_values` 0–255 is not.
 
 The schema changes below are historical sprint text. All would be additive and
 migratable through `REFERENCES` in [`records.py`](../backend/storage/records.py)
@@ -115,13 +114,14 @@ migratable through `REFERENCES` in [`records.py`](../backend/storage/records.py)
 
 ### 2.2 Add per-entry beat durations to both cue lists
 - **Goal.** Cue-list entries carrying `(target_id, beats)` for DMX and WLED alike.
-- **Why.** [AF-H02](audit_findings.md#af-h02) — beat duration is unrepresentable
-  today, which blocks the core feature.
+- **Why.** [AF-H02](audit_findings.md#af-h02) — variable hold times per cue entry
+  are still unrepresentable.
 - **Dependencies.** WS-6.1.
 - **Acceptance.** Both lists hold ordered entries with a per-entry beat count;
   `beats < 1` is rejected at load; migration preserves existing ordering with a
   documented default; both lists share one entry shape.
-- **Status.** Not started.
+- **Status.** **Deferred.** Schema v4 added one `beats` scalar per list, which
+  unblocked WS-3; revisit when a real show needs different hold times per cue.
 - **Files.** [`models/DMX_Preset_List.py`](../backend/models/DMX_Preset_List.py);
   [`models/WLED_Preset_List.py`](../backend/models/WLED_Preset_List.py);
   `storage/records.py`; `storage/migrations.py`.
@@ -149,7 +149,8 @@ migratable through `REFERENCES` in [`records.py`](../backend/storage/records.py)
   not required, but sensitivity semantics should be recorded when this lands.
 - **Acceptance.** Out-of-range values raise at model construction and at load;
   constraints applied to both the model and the record; tests cover each boundary.
-- **Status.** Not started.
+- **Status.** **Partly done** — `sensitivity` and cue-list `beats` bounded in schema
+  v4; `channel_values` 0–255 still open ([AF-M01](audit_findings.md#af-m01)).
 - **Files.** [`models/`](../backend/models/), `storage/records.py`.
 
 ---

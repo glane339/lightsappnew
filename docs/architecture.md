@@ -4,8 +4,9 @@ The primary architecture document. Assumes the terminology defined in
 [project_overview.md](project_overview.md#key-terminology).
 
 Throughout, **Current** describes code that exists in the repository today and
-**Target** describes proposed design that does not. Nothing marked Target has been
-implemented.
+**Target** describes proposed design that does not. Sections marked Target have not
+been implemented; show-control core modules are Current — see
+[show_control_architecture.md](show_control_architecture.md).
 
 ---
 
