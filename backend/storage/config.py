@@ -1,10 +1,16 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import List, Optional
+from typing import Optional
 
 from pydantic import BaseModel, Field
 
+from config.config import (
+    LEDFX_BASE_URL,
+    LEDFX_ENABLED,
+    LEDFX_REQUEST_TIMEOUT_S,
+    LEDFX_SCENE_REFRESH_S,
+)
 from storage.json_store import read_json, write_json
 from storage.migrations import SCHEMA_VERSION
 from storage.paths import config_path, ensure_layout
@@ -16,9 +22,13 @@ class DMXConfig(BaseModel):
     refresh_hz: int = 120
 
 
-class WLEDConfig(BaseModel):
-    devices: List[str] = []
-    discovery_enabled: bool = True
+class LedfxConfig(BaseModel):
+    """LEDfx HTTP integration. Nothing calls out unless ``enabled`` is true."""
+
+    enabled: bool = LEDFX_ENABLED
+    base_url: str = LEDFX_BASE_URL
+    scene_refresh_s: float = LEDFX_SCENE_REFRESH_S
+    request_timeout_s: float = LEDFX_REQUEST_TIMEOUT_S
 
 
 class ILDAConfig(BaseModel):
@@ -41,7 +51,7 @@ class AppConfig(BaseModel):
 
     schema_version: int = SCHEMA_VERSION
     dmx: DMXConfig = Field(default_factory=DMXConfig)
-    wled: WLEDConfig = Field(default_factory=WLEDConfig)
+    ledfx: LedfxConfig = Field(default_factory=LedfxConfig)
     ilda: ILDAConfig = Field(default_factory=ILDAConfig)
     audio: AudioConfig = Field(default_factory=AudioConfig)
     ui: UIConfig = Field(default_factory=UIConfig)

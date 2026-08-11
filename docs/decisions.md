@@ -27,7 +27,7 @@ Follow-up.
 | [D-015](#d-015-the-reference-graph-stays-declarative) | The reference graph stays declarative | Accepted |
 | [D-016](#d-016-audio-event-delivery-mechanism) | Audio event delivery mechanism | Open |
 | [D-017](#d-017-sacn-unicast-versus-multicast) | sACN unicast versus multicast | Open |
-| [D-018](#d-018-ledfx-preset-identifier-form) | LEDfx preset identifier form | Open |
+| [D-018](#d-018-ledfx-preset-identifier-form) | LEDfx preset identifier form | Accepted |
 
 ---
 
@@ -132,8 +132,8 @@ not a model in this repository.
 DMX universe (rejected: conflates two very different transports and discards LEDfx's
 effect engine).
 
-**Follow-up.** `WLED_Preset` has no LEDfx identifier and `WLED_Preset_List` is
-unreachable — [AF-H03](audit_findings.md#af-h03).
+**Follow-up.** `WLED_Preset.id` is the LEDfx scene name ([D-018](#d-018-ledfx-preset-identifier-form));
+`WLED_Preset_List` is still unreachable — [AF-H03](audit_findings.md#af-h03).
 
 ---
 
@@ -443,9 +443,21 @@ expectations are verified. See
 
 ## D-018: LEDfx preset identifier form
 
-**Status:** **Open.**
+**Status:** Accepted.
 
-What LEDfx entity a "preset" maps to, what form its identifier takes, and whether
-that identifier is stable across LEDfx restarts. If it is not stable, the app must
-store names and resolve at activation rather than storing ids. Blocks the WLED model
-change. See [wled_ledfx_architecture.md](wled_ledfx_architecture.md#31-preset-identifiers).
+**Decision.** A `WLED_Preset` maps to a **LEDfx scene**. `WLED_Preset.id` is the
+LEDfx scene **name** (e.g. `"Living Room"`). Available scenes are polled from
+`GET http://127.0.0.1:8888/api/scenes` every 25 seconds and missing names are
+auto-inserted into the `wled_presets` collection. Activation uses the LEDfx slug
+id resolved in memory from the latest list (`PUT /api/scenes` with
+`{"id": "<slug>", "action": "activate"}`). Scenes removed in LEDfx are not
+auto-deleted from storage.
+
+**Rationale.** Names are what the operator sees and edits in LEDfx; storing them
+as the preset id keeps cue lists human-readable and avoids a second identifier
+field. Slugs are only needed for the activate call and can be refreshed each poll.
+
+**Consequences.** `WLED_Preset` no longer uses a generated UUID. Cue lists that
+name a scene deleted in LEDfx keep a dangling-but-valid library id until the
+operator cleans them up. See
+[wled_ledfx_architecture.md](wled_ledfx_architecture.md#31-preset-identifiers).

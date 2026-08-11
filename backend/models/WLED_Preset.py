@@ -1,6 +1,7 @@
-from pydantic import BaseModel, Field
-from typing import List, Optional
-from uuid import uuid4
+from pydantic import BaseModel
+
 
 class WLED_Preset(BaseModel):
-    id: str = Field(default_factory=lambda: uuid4().hex)
+    """A LedFx scene mirrored into the library. ``id`` is the LedFx scene name."""
+
+    id: str

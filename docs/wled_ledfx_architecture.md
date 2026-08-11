@@ -1,10 +1,9 @@
 # WLED / LEDfx Architecture
 
-> **Status: the least implemented subsystem in the repository.** There is no LEDfx
-> code, no HTTP client, no networking dependency, and no WLED logic. The source
-> contains only WLED configuration/model placeholders; it contains no LEDfx call,
-> HTTP client, or WebSocket implementation. One of the two WLED models below is
-> unreachable.
+> **Status: LEDfx client and scene sync exist; beat sequencing and cue-list
+> registration do not.** `backend/ledfx/` talks to LEDfx over HTTP and can
+> autopopulate `WLED_Preset` rows from scene names. `WLED_Preset_List` is still
+> unreachable. There is no Scene Controller wiring yet.
 
 ---
 
@@ -42,7 +41,8 @@ Two models exist. Neither is usable.
 ```python
 # backend/models/WLED_Preset.py — complete file body
 class WLED_Preset(BaseModel):
-    id: str = Field(default_factory=lambda: uuid4().hex)
+    """A LedFx scene mirrored into the library. ``id`` is the LedFx scene name."""
+    id: str
 ```
 
 ```python
@@ -53,15 +53,14 @@ class WLED_Preset_List(BaseModel):
     beats: int = 0
 ```
 
-### 2.1 `WLED_Preset` has no LEDfx identifier
+### 2.1 `WLED_Preset.id` is the LEDfx scene name
 
-It carries only a generated UUID hex string. There is no field naming an LEDfx
-preset, scene, virtual device, or effect. As stored, a `WLED_Preset` cannot
-identify anything in LEDfx. It is registered with the storage layer
-([`records.py:47`](../backend/storage/records.py#L47),
-[`records.py:69`](../backend/storage/records.py#L69)) and is reachable from
-`Preset.wled_preset_id`, so it round-trips correctly — it just carries no
-information. Tracked as [AF-H03](audit_findings.md#af-h03).
+**Accepted ([D-018](decisions.md#d-018-ledfx-preset-identifier-form)).** The
+entity in LEDfx is a *scene*. The app stores that scene's human-readable `name`
+as `WLED_Preset.id` — there is no separate LEDfx id field and no generated UUID.
+`LedFxSceneSync` polls `GET /api/scenes` and inserts any missing names into
+`wled_presets`. Activation resolves name → LEDfx slug in memory from the latest
+list. See §6.
 
 ### 2.2 `WLED_Preset_List` is unreachable
 
@@ -108,16 +107,15 @@ subsystem.
 ### 2.5 Configuration
 
 ```python
-# backend/storage/config.py:19
-class WLEDConfig(BaseModel):
-    devices: List[str] = []
-    discovery_enabled: bool = True
+# backend/storage/config.py
+class LedfxConfig(BaseModel):
+    enabled: bool = False
+    base_url: str = "http://127.0.0.1:8888"
+    scene_refresh_s: float = 25.0
+    request_timeout_s: float = 2.0
 ```
 
-Anticipates the integration but does not fit it: there is no LEDfx base URL, no
-port, and no API token field, and `devices: List[str]` is untyped and unread.
-`discovery_enabled` implies the app discovers WLED devices — which contradicts §1,
-where LEDfx owns device management. This config section will need reshaping.
+Held on `AppConfig.ledfx`. Nothing opens a socket unless `enabled` is true.
 
 ---
 
@@ -136,8 +134,7 @@ WLED_Preset_List             REGISTERED with the storage layer
     └── beats                per entry
 
 WLED_Preset
-├── id
-└── ledfx_preset_id          NEW: the identifier LEDfx actually understands
+└── id                       the LEDfx scene name (not a UUID)
 ```
 
 The same per-entry beat problem exists on the DMX side —
@@ -152,21 +149,28 @@ All of this is additive/migratable through the existing
 
 ### 3.1 Preset identifiers
 
-**Open question, unanswerable from the repository.** LEDfx addresses things by
-several kinds of identifier, and the right one depends on the LEDfx version and how
-the rig is configured. Before implementation, establish and record:
+**Decided ([D-018](decisions.md#d-018-ledfx-preset-identifier-form)).**
 
-1. What LEDfx entity does a "preset" map to — a scene applied across the whole
-   instance, or a per-virtual-device effect preset?
-2. Is the identifier a slug, a UUID, or a name?
-3. Is it stable across LEDfx restarts and config edits?
+| Question | Answer |
+| --- | --- |
+| LEDfx entity | Scene (`/api/scenes`) |
+| Stored identifier | Scene **name** as `WLED_Preset.id` |
+| Activate identifier | LEDfx **slug** (list map key), resolved in memory from the latest poll |
+| Gone from LEDfx | Leave the library row; do not auto-delete |
 
-Question 3 matters most: if identifiers are not stable, storing them in
-`data/wled_presets.json` produces a config that silently breaks. If they are not
-stable, store the human-readable name and resolve at activation.
+LEDfx list response shape (simplified):
 
-Until answered, `ledfx_preset_id: str` is the honest field — an opaque string the
-app stores and passes through.
+```json
+{
+  "status": "success",
+  "scenes": {
+    "living-room": { "name": "Living Room", "active": true }
+  }
+}
+```
+
+Sync stores `"Living Room"`; activate sends
+`{"id": "living-room", "action": "activate"}`.
 
 ---
 
@@ -181,16 +185,16 @@ flowchart TD
     A["beat event"] --> B["WLED BeatSequencer<br/>same class as DMX"]
     B --> C{"index changed?"}
     C -->|no| D["nothing"]
-    C -->|yes| E["LEDfx Client:<br/>activate entry.ledfx_preset_id"]
+    C -->|yes| E["LEDfx Client:<br/>activate entry.wled_preset_id<br/>(scene name)"]
 ```
 
 Runtime behaviour, per the intended design:
 
 1. On scene activation, activate entry 0 immediately (not on the first beat).
 2. Count beat events.
-3. Hold the current LEDfx preset for the entry's configured beat count.
+3. Hold the current LEDfx scene for the entry's configured beat count.
 4. Advance; loop or hold at the end according to list behaviour.
-5. **Call the LEDfx API only when the active preset actually changes.**
+5. **Call the LEDfx API only when the active scene name actually changes.**
 
 ---
 
@@ -200,29 +204,24 @@ A physical LED installation is often divided into several LEDfx *virtual devices
 so sections can run different effects independently — for example, one strip split
 into left/right halves.
 
-**Current status: not modelled.** `WLEDConfig.devices: List[str]` is the only
-gesture toward it, and it is unused and untyped.
-
-This is an area where the temptation to over-model is high. Recommended minimum:
-treat the LEDfx virtual-device layout as **LEDfx's business**, and have the app
-reference whatever LEDfx-level identifier applies a preset to the right set of
-devices. Only introduce an app-side device mapping if it turns out LEDfx cannot
-express the grouping the rig needs. Do not build a device abstraction speculatively.
+**Current status: not modelled.** Virtual-device layout stays LEDfx's business;
+activating a scene applies whatever virtuals that scene captured. Do not build an
+app-side device mapping unless LEDfx cannot express the grouping the rig needs.
 
 ---
 
-## 6. LEDfx API client responsibilities
+## 6. LEDfx API client and scene sync
 
-**Proposed.** A single adapter module, the only place in the codebase that knows
-LEDfx exists.
+**Implemented** under [`backend/ledfx/`](../backend/ledfx/).
 
-| Owns | Does not own |
-| --- | --- |
-| Base URL and connection config | When to change preset |
-| HTTP calls and their encoding | Beat counting or cue indices |
-| Timeouts, retries, backoff | Reading the `Library` |
-| Deduplication of repeat calls | Any DMX or ILDA concern |
-| Reachability state, surfaced upward | Persisting anything |
+| Component | Owns | Does not own |
+| --- | --- | --- |
+| `LedFxClient` | Base URL, HTTP, timeouts, name→slug map, activate dedup, reachability | `Library`, beat counting, when to change scene |
+| `LedFxSceneSync` | 25s poll, inserting missing `WLED_Preset` rows | Creating/editing scenes in LEDfx, deleting vanished names |
+| `NullLedFxClient` | Default when `ledfx.enabled` is false | Network |
+
+Activate path: `PUT {base_url}/api/scenes` with
+`{"id": "<slug>", "action": "activate"}`. List path: `GET /api/scenes`.
 
 ### 6.1 Call deduplication
 
@@ -266,20 +265,16 @@ preset. This is a deliberate decision to make, not an oversight to inherit.
 
 ## 7. Configuration
 
-Proposed replacement for the current `WLEDConfig`:
-
 ```text
-LedfxConfig
-├── enabled: bool = False        nothing calls out unless switched on
-├── base_url: str                e.g. http://127.0.0.1:8888
-├── request_timeout_s: float
-└── retry_backoff_s: float
+LedfxConfig                         AppConfig.ledfx
+├── enabled: bool = False           nothing calls out unless switched on
+├── base_url: str                   default http://127.0.0.1:8888
+├── scene_refresh_s: float = 25     LedFxSceneSync interval
+└── request_timeout_s: float = 2.0
 ```
 
-`discovery_enabled` should be dropped — device discovery is LEDfx's job (§1). No
-credentials, tokens, IPs, or hostnames belong in the repository; they belong in the
-user's `config.json`, which lives in the per-user data folder and is not tracked by
-git.
+No credentials belong in the repository; overrides live in the user's
+`config.json` (per-user data folder, not git-tracked).
 
 ---
 
@@ -294,8 +289,7 @@ Three layers, none requiring a strip, a controller, or a running LEDfx:
 2. **HTTP-level.** Test the real client against a stub HTTP server or a mocked
    transport, asserting on method, path, and body. Never against a real LEDfx.
 3. **Live LEDfx, no hardware.** LEDfx runs without physical WLED devices attached,
-   which makes it a genuine manual integration target that risks nothing. This is
-   the recommended place to answer the identifier questions in §3.1.
+   which makes it a genuine manual integration target that risks nothing.
 
 As with DMX, the null implementation should be the **default**, so no test run or
 development session can emit a call by accident.
