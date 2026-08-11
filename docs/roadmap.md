@@ -19,7 +19,8 @@ flowchart TD
     P3 --> P4["4 · DMX state & E1.31"]
     P3 --> P5["5 · LEDfx / WLED"]
     P4 --> P7["7 · Basement fixture config"]
-    P7 --> P8["8 · Operator UI & recovery"]
+    P7 --> P7A["7a · Show authoring<br/>frameworks & API"]
+    P7A --> P8["8 · Operator UI & recovery"]
     P5 --> P8
     P8 --> P9["9 · ILDA behind safety boundaries"]
     P8 --> P10["10 · Hardening & optional generalization"]
@@ -242,11 +243,40 @@ action per fixture.
 
 ---
 
+## Phase 7a · Show authoring frameworks and API
+
+**Scope.** Typed creation and update helpers for scenes, lighting presets, and both
+cue list types; a single `Library` mutation owner; HTTP endpoints and a documented
+frontend contract. Detail in [WS-10](current_sprint.md#ws-10--show-authoring-frameworks).
+
+**Exit criteria.**
+- A caller can create a playable scene (preset + non-empty DMX and WLED cue lists)
+  without hand-editing JSON or calling `Library.add()` out of order.
+- DMX and WLED cue list APIs are symmetric (create, reorder, set `beats`).
+- Deletes expose cascade impact before execution ([AF-H04](audit_findings.md#af-h04)).
+- HTTP CRUD exists for scenes, presets, and cue lists; errors map consistently.
+- Request/response shapes are documented for the future `frontend/` client.
+
+**Non-goals.** No pixel editor, no DMX look authoring UI (channel sliders) in v1 —
+looks may still be authored via JSON or a later pass. No auth beyond single-operator
+LAN. No WebSocket show stream yet.
+
+**Risks.** Duplicating graph rules in the API layer instead of delegating to one
+authoring service ([WS-10.5](current_sprint.md#105-authoring-service-owner)).
+
+**Dependencies.** Phases 2, 3.
+
+**Status.** Not started — tracked as WS-10 in [current_sprint.md](current_sprint.md).
+
+---
+
 ## Phase 8 · Operator UI and recovery behaviour
 
 **Scope.** The interface an operator actually uses: scene selection, current state
 display, BPM and audio level, output health, and manual overrides. Plus the failure
-behaviour that makes the system trustworthy mid-show.
+behaviour that makes the system trustworthy mid-show. **Authoring** (creating scenes,
+presets, and cue lists) goes through phase 7a / WS-10; phase 8 can start with
+selection-only UI once transport and LEDfx paths exist.
 
 **Exit criteria.**
 - A scene can be selected in one action.
@@ -255,14 +285,17 @@ behaviour that makes the system trustworthy mid-show.
 - A blackout / panic control exists and works regardless of the show state.
 - Deletion is confirmed before it cascades ([AF-H04](audit_findings.md#af-h04)).
 - Failures surface in the UI, not only in the log.
+- *(With WS-11)* Authoring forms use the phase 7a API — no parallel graph logic in
+  the client.
 
-**Non-goals.** No scene editor at first — editing JSON by hand is acceptable while
-the model settles. No remote or mobile control. No multi-user.
+**Non-goals.** Full scene editor on day one is acceptable if JSON + phase 7a API
+cover creation; grow into WS-11 forms incrementally. No remote or mobile control.
+No multi-user.
 
 **Risks.** UI work expanding to fill available time. The operator interface for a
 manually-driven one-room show is small; keep it small.
 
-**Dependencies.** Phases 4, 5, 7.
+**Dependencies.** Phases 4, 5, 7; phase 7a for authoring UI ([WS-11](current_sprint.md#ws-11--frontend-and-http-server)).
 
 **Checkpoint.** This is the natural point to re-evaluate
 [D-010](decisions.md#d-010-basement-reliability-outranks-generality). If the system

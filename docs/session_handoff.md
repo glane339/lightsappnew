@@ -1,8 +1,16 @@
 # Session Handoff
 
-> **Historical.** This documents the architecture-review session that created the
-> initial `docs/` set at commit `691062e`. For current status see
-> [project_overview.md](project_overview.md) and [current_sprint.md](current_sprint.md).
+> **Historical (2026-03).** The sections below document the architecture-review
+> session that created the initial `docs/` set at commit `691062e`.
+>
+> **Latest session (2026-08-10)** — docs only; no source changes. Resolved
+> `audit_findings.md` merge conflicts, refreshed docs for schema v4 and WS-3,
+> added WS-10/11 and roadmap phase 7a for future frontend/server authoring.
+> Pick up from [Future plans](current_sprint.md#future-plans) in
+> [current_sprint.md](current_sprint.md).
+>
+> For day-to-day status see [project_overview.md](project_overview.md) and
+> [current_sprint.md](current_sprint.md).
 
 Contributor handoff from the architecture-review session that created this
 documentation set.

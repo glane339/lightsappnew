@@ -127,6 +127,9 @@ Ranked by how much they block a working system:
    but nothing runs a show loop against a live LEDfx instance.
 5. **No entry point.** The show-control core is library code only; nothing
    subscribes a beat source, starts a sender, or exposes an operator UI.
+6. **No authoring layer for UI/server.** `Library.add()` is collection-granular;
+   there are no typed helpers or HTTP routes for creating scenes, lighting presets,
+   or cue lists ([WS-10](current_sprint.md#ws-10--show-authoring-frameworks)).
 
 ## System boundaries
 
@@ -226,7 +229,8 @@ flowchart LR
 | What about the laser? | [laser_and_haze_safety.md](laser_and_haze_safety.md) |
 | What is wrong with the code today? | [audit_findings.md](audit_findings.md) |
 | What should I build next? | [current_sprint.md](current_sprint.md) |
+| How do I create scenes/presets from a UI? | [current_sprint.md § WS-10](current_sprint.md#ws-10--show-authoring-frameworks) |
 | What is the long-term plan? | [roadmap.md](roadmap.md) |
 | Why was it built this way? | [decisions.md](decisions.md) |
 | How do I run it? | [platform_support.md](platform_support.md) |
-| What did the last contributor do? | [session_handoff.md](session_handoff.md) |
+| What did the last contributor do? | [session_handoff.md](session_handoff.md) · [Future plans](current_sprint.md#future-plans) |

@@ -6,7 +6,58 @@ Longer horizon in [roadmap.md](roadmap.md).
 
 **Status key:** `Not started` · `In progress` · `Done` · `Blocked`
 
-## Ordering
+## Future plans
+
+> **Session closed 2026-08-10.** Nothing below is in progress — it is the queue for
+> when work resumes. Current maturity in
+> [project_overview.md](project_overview.md#current-maturity).
+
+### Landed (no action needed)
+
+| Area | Status |
+| --- | --- |
+| Storage, schema v4, migrations | Done |
+| DMX fixture model (`DMX_Device`, patch-based resolution) | Done |
+| WLED list registration, `Preset.wled_preset_list_id` | Done |
+| List-level `beats`, bounded `sensitivity` | Done (schema v4) |
+| `CueSequencer`, `SceneController`, outputs, `BeatSource` protocol | Done (WS-3) |
+| 84-test suite (storage + sequencing + outputs) | Done |
+| Audit v2 merge + post-audit doc refresh | Done (this session) |
+
+### Build next (dependency order)
+
+1. **WS-4 · E1.31 transport** — parked until the universe box is verified; unblocks
+   hardware DMX.
+2. **WS-5 · LEDfx integration** — wire `WledOutput` into a live process; client/sync
+   tests ([AF2-M03](audit_findings.md#af2-m03)).
+3. **WS-9 · Real beat detection** — live audio; `ManualBeatSource` stays for tests.
+4. **App entry point** — open `Library`, wire `SceneController` + beat source +
+   outputs (+ optional LEDfx); see [WS-11.1](#111-app-entry-point-and-process-lifecycle).
+5. **WS-10 · Show authoring frameworks** — typed create/update for cue lists,
+   presets, and scenes; HTTP API; frontend contract. **Required before authoring UI.**
+6. **WS-11 · Frontend and HTTP server** — `frontend/` client over WS-10 API.
+
+Longer arc: [roadmap.md](roadmap.md) phases 4 → 5 → 7 → **7a** → 8.
+
+### Deferred (revisit when a real show needs them)
+
+| Item | Workstream | Why wait |
+| --- | --- | --- |
+| Per-entry beat durations | WS-2.2 / WS-3.5 | List-level `beats` unblocked sequencing |
+| `channel_values` 0–255 clamp | WS-2.4 | Sensitivity/beats done; values still open |
+| Module-global buffer → owned state | WS-3.4 | Matters once a real beat thread exists |
+| Multi-universe buffers | WS-4.1 | One universe matches current rig |
+| ILDA output | WS-7 / phase 9 | Laser path severed; safety gates first |
+| CI workflow | WS-6 / audit P0 | No blocker for local dev |
+
+### Before building frontend or server
+
+Read [WS-10](#ws-10--show-authoring-frameworks) first. The UI must not call
+`Library.add()` directly — go through the authoring service (10.5) and HTTP surface
+(10.6). Scene → lighting preset → DMX cue list + WLED cue list is the creation
+hierarchy.
+
+---
 
 ```mermaid
 flowchart LR
@@ -19,11 +70,16 @@ flowchart LR
     WS1 --> WS7["WS-7<br/>ILDA severed<br/>from show path"]
     WS1 --> WS8["WS-8<br/>Docs &<br/>onboarding"]
     WS3 --> WS9["WS-9<br/>Real beat<br/>detection"]
+    WS2 --> WS10["WS-10<br/>Show authoring<br/>frameworks"]
+    WS3 --> WS10
+    WS10 --> WS11["WS-11<br/>Frontend &<br/>HTTP server"]
 ```
 
 WS-6 comes before schema changes deliberately: the storage layer's cascade and
 pruning logic is the code most likely to break under model changes. WS-6.1 is
-**done** ([AF-H05](audit_findings.md#af-h05) partially addressed).
+**done** ([AF-H05](audit_findings.md#af-h05) partially addressed). WS-10 is the
+authoring layer a frontend or HTTP server will call — it is not started and does
+not block WS-3 through WS-9.
 
 ---
 
@@ -423,3 +479,125 @@ migratable through `REFERENCES` in [`records.py`](../backend/storage/records.py)
 - **Acceptance.** No Open decision blocks an in-progress workstream.
 - **Status.** D-018 **Accepted**. D-016 and D-017 remain Open.
 - **Files.** [`decisions.md`](decisions.md).
+
+---
+
+## WS-10 · Show authoring frameworks
+
+> **Not started.** [`Library`](../backend/storage/library.py) already supports
+> `add()`, `get()`, and `delete()` per collection, but there is no typed layer for
+> building the show graph from a UI or HTTP server. Raw `Library` calls require
+> knowing `COLLECTION_ORDER`, forward-reference rules, and cascade semantics —
+> easy to get wrong from a frontend. WS-10 is that layer.
+
+Depends on WS-2 (model) and WS-3 (semantics of `beats` and scene activation).
+Blocks WS-11 (frontend and HTTP server).
+
+### 10.1 DMX cue list creation framework
+- **Goal.** Create, update, reorder, and validate `DMX_Preset_List` objects: ordered
+  `dmx_preset_ids`, list-level `beats`, non-empty guard before a preset references
+  the list.
+- **Why.** A UI editor needs to assemble looks into a sequence without hand-editing
+  JSON or calling `Library.add()` in the wrong order.
+- **Dependencies.** WS-2.1, WS-2.4 (partial — `beats` bounded).
+- **Acceptance.** A caller can create a list from an ordered id sequence; reorder
+  and replace entries; get a clear error when a referenced `DMX_Preset` is missing;
+  round-trip through save/load; tests use a temp `Library` root only.
+- **Status.** Not started.
+- **Files.** new `backend/authoring/` (or `backend/services/`), tests alongside.
+
+### 10.2 WLED cue list creation framework
+- **Goal.** Same as 10.1 for `WLED_Preset_List`: ordered `wled_preset_ids`, `beats`,
+  validation that each id names a known LEDfx scene (from sync or manual add).
+- **Why.** WLED cue lists mirror DMX cue lists; the UI should treat them symmetrically.
+- **Dependencies.** 10.1 pattern; WS-2.3; WS-5 when live LEDfx sync is wired.
+- **Acceptance.** Parallel API shape to 10.1; rejects empty lists and dangling preset
+  ids; tests cover reorder and beats update.
+- **Status.** Not started.
+- **Files.** `backend/authoring/`, tests.
+
+### 10.3 Lighting preset creation framework
+- **Goal.** Create or update a `Preset` that pairs one DMX cue list with one WLED cue
+  list — either linking existing lists or creating both as part of one operation.
+- **Why.** Scenes point at presets, not at cue lists directly; the preset is the
+  natural unit an operator names (“Red wash + stripes”).
+- **Dependencies.** 10.1, 10.2.
+- **Acceptance.** Atomic create: both lists exist and are referenced before save;
+  update can swap either list id; delete refuses or returns cascade plan when scenes
+  reference the preset ([AF-H04](audit_findings.md#af-h04)).
+- **Status.** Not started.
+- **Files.** `backend/authoring/`, tests.
+
+### 10.4 Scene creation framework
+- **Goal.** Create, update, and list `Scene` objects: `preset_id`, `sensitivity`
+  (default from `AudioConfig.default_sensitivity`), optional `ilda_frame_list_id`.
+- **Why.** Scene selection is the operator’s top-level action; creation must validate
+  that the preset’s cue lists are playable (non-empty) before activation would succeed.
+- **Dependencies.** 10.3; [`SceneController`](../backend/runtime/scene_controller.py)
+  for optional dry-run / preview activation in tests.
+- **Acceptance.** Create scene with bounded sensitivity; reject missing preset;
+  reject preset whose cue lists are empty (same rules as `SceneController.activate`);
+  list and fetch for UI tables; update sensitivity without touching sequence state.
+- **Status.** Not started.
+- **Files.** `backend/authoring/`, tests.
+
+### 10.5 Authoring service owner
+- **Goal.** One module (or small package) that owns all `Library` mutations from
+  non-test callers: batch adds in `COLLECTION_ORDER`, single `save()`, mapped errors.
+- **Why.** [AF2-H01](audit_findings.md#af2-h01) — background LEDfx sync must not
+  share unsynchronized `Library` access with the UI thread; the authoring service is
+  the main-thread mutation path.
+- **Dependencies.** 10.1–10.4.
+- **Acceptance.** All authoring operations go through one entry type; exposes
+  `plan_delete()` (or equivalent) before destructive deletes; no route handler or UI
+  code calls `Library.add()` directly; unit tests cover error mapping.
+- **Status.** Not started.
+- **Files.** `backend/authoring/`, [`storage/library.py`](../backend/storage/library.py)
+  (read-only integration).
+
+### 10.6 HTTP API surface
+- **Goal.** REST (or equivalent) endpoints for scenes, lighting presets, and both cue
+  list types — thin handlers delegating to 10.5.
+- **Why.** WS-11 frontend needs a stable contract; handlers stay dumb so business
+  rules live in one place.
+- **Dependencies.** 10.5; app entry point (process lifecycle, `configure_logging()`).
+- **Acceptance.** CRUD routes for each authoring type; consistent error JSON for
+  validation and `StorageError`; OpenAPI or documented request/response shapes;
+  integration tests against an in-memory or temp-root server; no auth scope in v1
+  (single-operator LAN).
+- **Status.** Not started.
+- **Files.** new `backend/server/` or `backend/api/`, tests.
+
+### 10.7 Frontend integration contract
+- **Goal.** Document the DTOs and flows the `frontend/` app will use: list views,
+  create/edit forms, and the scene → preset → cue lists → looks hierarchy.
+- **Why.** Avoid duplicating graph knowledge in TypeScript; keep the UI a thin client
+  over 10.6.
+- **Dependencies.** 10.6 draft shapes stable enough to document.
+- **Acceptance.** Doc section (or OpenAPI) lists every endpoint, field, and error
+  code; example payloads for “create DMX cue list”, “create preset from two lists”,
+  “create scene”; notes which ids are user-visible names vs opaque hex.
+- **Status.** Not started.
+- **Files.** `docs/` (authoring section or extension to
+  [architecture.md](architecture.md)); generated or hand-written API doc from 10.6.
+
+---
+
+## WS-11 · Frontend and HTTP server
+
+> **Not started.** Depends on WS-10. Operator UI for scene *selection* and show
+> health may land earlier (roadmap phase 8); full *authoring* UI depends on WS-10.
+
+### 11.1 App entry point and process lifecycle
+- **Goal.** A runnable process: open `Library`, `configure_logging()`, wire
+  `SceneController` + beat source + outputs + optional LEDfx stack.
+- **Dependencies.** WS-3, WS-4/WS-5 as needed for hardware paths.
+- **Status.** Not started.
+
+### 11.2 Frontend application
+- **Goal.** `frontend/` client consuming WS-10.6/10.7: scene list, scene select,
+  authoring forms for cue lists / presets / scenes.
+- **Dependencies.** WS-10 complete.
+- **Status.** Not started.
+
+---
