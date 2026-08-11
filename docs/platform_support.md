@@ -116,13 +116,14 @@ The application stores nothing inside the repository. Layout, from
 
 ```text
 %LOCALAPPDATA%\LightsApp\          (Windows; platformdirs picks the equivalent elsewhere)
-├── config.json                    AppConfig — dmx / ledfx / ilda / audio / ui (schema v2)
+├── config.json                    AppConfig — dmx / ledfx / ilda / audio / ui (schema v3)
 ├── data/                          one JSON file per collection
 │   ├── scenes.json
 │   ├── presets.json
 │   ├── dmx_preset_lists.json
 │   ├── dmx_presets.json
 │   ├── dmx_device_presets.json
+│   ├── dmx_devices.json
 │   ├── wled_preset_lists.json
 │   ├── wled_presets.json
 │   ├── ilda_frame_lists.json
@@ -213,8 +214,9 @@ Fixtures use `tmp_path` for the data root — they do not touch
 `%LOCALAPPDATA%\LightsApp`. See [`tests/conftest.py`](../tests/conftest.py).
 
 Coverage today: storage round-trip, integrity, cascade delete, orphan pruning, ILDA
-folder sync, corrupt-file quarantine, archive import/export, schema v2 migration,
-logging setup. No runtime show-loop or LEDfx HTTP integration tests yet.
+folder sync, corrupt-file quarantine, archive import/export, schema v2 and v3
+migrations, DMX device addressing (gaps, overlap, universe bounds), logging setup.
+No show-loop or LEDfx HTTP integration tests yet.
 
 ---
 
@@ -226,7 +228,7 @@ required to develop against the current codebase:
 | Hardware | Status |
 | --- | --- |
 | Custom DMX universe box | Opaque endpoint; IP, universe numbering, and transport mode all unverified |
-| DMX fixtures | No patch recorded; no fixture model exists ([AF-H01](audit_findings.md#af-h01)) |
+| DMX fixtures | [`DMX_Device`](../backend/models/DMX_Device.py) records the patch; channel tables in [docs/fixtures/](fixtures/README.md) |
 | WLED controllers and strips | Managed entirely by LEDfx |
 | Audio interface | Undetermined; see above |
 | Laser projector and DAC | **Not identified. Output must not be enabled** — [laser_and_haze_safety.md](laser_and_haze_safety.md) |
@@ -257,8 +259,8 @@ Real output is always the opt-in — see
 - **Multi-user or concurrent operators.** Single-operator by design.
 - **Remote or internet access.** LAN only; nothing listens on a socket.
 - **Non-Windows deployment.** Not blocked by the code, but untested and not a target.
-- **Multi-universe DMX.** Structurally impossible today — `Active_DMX_Channels` is a
-  single 512-value list ([AF-H01](audit_findings.md#af-h01)).
+- **Multi-universe DMX.** `DMX_Device.universe` is stored, but `Active_DMX_Channels` is
+  still a single 512-value list and the runtime rejects any other universe.
 - **Any scale beyond one room.** See [D-009](decisions.md#d-009-basement-deployment-is-the-immediate-target).
 
 ---

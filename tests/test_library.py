@@ -111,7 +111,8 @@ def test_force_delete_unlinks_from_list_without_removing_list(library: Library) 
 
 def test_prune_orphans_keeps_reachable_and_drops_unreachable(library: Library) -> None:
     scene = build_minimal_scene_graph(library)
-    orphan = DMX_Device_Preset(order=9, channel_count=1, channel_values=[1])
+    device_id = next(iter(library.dmx_devices))
+    orphan = DMX_Device_Preset(device_id=device_id, channel_values=[1])
     library.add(orphan)
 
     removed = library.prune_orphans()

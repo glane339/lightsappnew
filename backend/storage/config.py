@@ -17,9 +17,20 @@ from storage.paths import config_path, ensure_layout
 
 
 class DMXConfig(BaseModel):
-    universe: int = 0
+    """
+    E1.31 (sACN) output settings, carried over from the previous app's config.
+
+    No transport reads these yet. The universe numbering starts at 1 to match
+    ``DMX_Device.universe`` and E1.31 itself, where 0 is not a valid universe. Slot
+    count is not configurable — it is ``UNIVERSE_SIZE``, fixed by the protocol.
+    """
+
+    universe: int = Field(default=1, ge=1, le=63999)
+    host: str = "127.0.0.1"
+    port: int = Field(default=5568, ge=1, le=65535)
+    priority: int = Field(default=100, ge=0, le=200)
     interface: Optional[str] = None
-    refresh_hz: int = 120
+    refresh_hz: int = Field(default=120, ge=1)
 
 
 class LedfxConfig(BaseModel):

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Dict, List, Tuple, Type
+from typing import Dict, List, Optional, Tuple, Type
 
 from pydantic import BaseModel
 
@@ -9,6 +9,7 @@ PRESETS = "presets"
 DMX_PRESET_LISTS = "dmx_preset_lists"
 DMX_PRESETS = "dmx_presets"
 DMX_DEVICE_PRESETS = "dmx_device_presets"
+DMX_DEVICES = "dmx_devices"
 WLED_PRESET_LISTS = "wled_preset_lists"
 WLED_PRESETS = "wled_presets"
 ILDA_FRAME_LISTS = "ilda_frame_lists"
@@ -38,10 +39,19 @@ class DMXPresetRecord(BaseModel):
     dmx_device_preset_ids: List[str] = []
 
 
+class DMXDeviceRecord(BaseModel):
+    id: str
+    name: str
+    model: Optional[str] = None
+    mode: Optional[str] = None
+    universe: int = 1
+    start_address: int
+    channel_count: int
+
+
 class DMXDevicePresetRecord(BaseModel):
     id: str
-    order: int
-    channel_count: int
+    device_id: str
     channel_values: List[int] = []
 
 
@@ -72,6 +82,7 @@ RECORD_TYPES: Dict[str, Type[BaseModel]] = {
     DMX_PRESET_LISTS: DMXPresetListRecord,
     DMX_PRESETS: DMXPresetRecord,
     DMX_DEVICE_PRESETS: DMXDevicePresetRecord,
+    DMX_DEVICES: DMXDeviceRecord,
     WLED_PRESET_LISTS: WLEDPresetListRecord,
     WLED_PRESETS: WLEDPresetRecord,
     ILDA_FRAME_LISTS: ILDAFrameListRecord,
@@ -82,6 +93,7 @@ RECORD_TYPES: Dict[str, Type[BaseModel]] = {
 COLLECTION_ORDER: Tuple[str, ...] = (
     WLED_PRESETS,
     WLED_PRESET_LISTS,
+    DMX_DEVICES,
     DMX_DEVICE_PRESETS,
     DMX_PRESETS,
     DMX_PRESET_LISTS,
@@ -91,9 +103,10 @@ COLLECTION_ORDER: Tuple[str, ...] = (
     SCENES,
 )
 
-# Anchors for orphan pruning. Scenes because nothing points at them, and ILDA frames
-# because their .ild files are dropped into the folder and own their own lifetime.
-ROOT_COLLECTIONS: Tuple[str, ...] = (SCENES, ILDA_FRAMES)
+# Anchors for orphan pruning. Scenes because nothing points at them, ILDA frames
+# because their .ild files are dropped into the folder and own their own lifetime, and
+# DMX devices because the rig's patch exists whether or not a look uses it yet.
+ROOT_COLLECTIONS: Tuple[str, ...] = (SCENES, ILDA_FRAMES, DMX_DEVICES)
 
 # parent collection -> (id attribute, child collection, attribute holds a list of ids)
 # The attribute name is the same on the model and on the record.
@@ -108,6 +121,7 @@ REFERENCES: Dict[str, Tuple[Tuple[str, str, bool], ...]] = {
     ),
     DMX_PRESET_LISTS: (("dmx_preset_ids", DMX_PRESETS, True),),
     DMX_PRESETS: (("dmx_device_preset_ids", DMX_DEVICE_PRESETS, True),),
+    DMX_DEVICE_PRESETS: (("device_id", DMX_DEVICES, False),),
     WLED_PRESET_LISTS: (("wled_preset_ids", WLED_PRESETS, True),),
     ILDA_FRAME_LISTS: (("ilda_frame_ids", ILDA_FRAMES, True),),
 }

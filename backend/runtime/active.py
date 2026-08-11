@@ -1,18 +1,23 @@
 from __future__ import annotations
 
-from typing import List
+from typing import Dict, List
 
 from models.Active_DMX_Channels import UNIVERSE_SIZE, Active_DMX_Channels
 from models.Active_ILDA_Frame import Active_ILDA_Frame
 from storage.json_store import StorageError
 from storage.records import (
     DMX_DEVICE_PRESETS,
+    DMX_DEVICES,
     DMX_PRESET_LISTS,
     DMX_PRESETS,
     ILDA_FRAME_LISTS,
     PRESETS,
     SCENES,
 )
+
+# Only one universe is buffered today. Devices carry a universe so the patch can be
+# recorded now, but anything other than this is rejected rather than silently dropped.
+SUPPORTED_UNIVERSE = 1
 
 # The two instances the senders read. Rebuilt in place so a sender holding a reference
 # always sees the latest values.
@@ -22,31 +27,46 @@ active_ilda_frame = Active_ILDA_Frame()
 
 def build_channels(library, dmx_preset_id: str) -> List[int]:
     """
-    Lay the preset's device presets end to end into one universe.
+    Resolve a look into one universe buffer using each device's patched address.
 
-    Devices are sorted by `order`, and each one starts where the previous device's
-    channels ended, so a device's start address is the sum of the channel_count of
-    every device before it.
+    A device's slot comes from its DMX_Device record rather than from the order of
+    the look, so address gaps are expressible and two devices claiming the same
+    channel is an error instead of a silent overwrite.
     """
     preset = library.get(DMX_PRESETS, dmx_preset_id)
-    devices = sorted(
-        (library.get(DMX_DEVICE_PRESETS, device_id) for device_id in preset.dmx_device_preset_ids),
-        key=lambda device: device.order,
-    )
 
     channels = [0] * UNIVERSE_SIZE
-    cursor = 0
-    for device in devices:
-        if cursor + device.channel_count > UNIVERSE_SIZE:
+    claimed_by: Dict[int, str] = {}
+
+    for device_preset_id in preset.dmx_device_preset_ids:
+        device_preset = library.get(DMX_DEVICE_PRESETS, device_preset_id)
+        device = library.get(DMX_DEVICES, device_preset.device_id)
+
+        if device.universe != SUPPORTED_UNIVERSE:
             raise StorageError(
-                f"dmx_presets '{dmx_preset_id}' needs more than {UNIVERSE_SIZE} channels: "
-                f"dmx_device_presets '{device.id}' would end at channel "
-                f"{cursor + device.channel_count}"
+                f"dmx_devices '{device.id}' is patched to universe {device.universe}, but only "
+                f"universe {SUPPORTED_UNIVERSE} is buffered today"
             )
-        values = list(device.channel_values)[: device.channel_count]
+        if device.end_address > UNIVERSE_SIZE:
+            raise StorageError(
+                f"dmx_devices '{device.id}' ends at channel {device.end_address}, past the "
+                f"{UNIVERSE_SIZE}-channel universe"
+            )
+
+        start = device.start_address - 1
+        for offset in range(start, start + device.channel_count):
+            holder = claimed_by.get(offset)
+            if holder is not None and holder != device.id:
+                raise StorageError(
+                    f"dmx_devices '{device.id}' and '{holder}' both claim channel {offset + 1} "
+                    f"in dmx_presets '{dmx_preset_id}'"
+                )
+            claimed_by[offset] = device.id
+
+        values = list(device_preset.channel_values)[: device.channel_count]
         values += [0] * (device.channel_count - len(values))
-        channels[cursor : cursor + device.channel_count] = values
-        cursor += device.channel_count
+        channels[start : start + device.channel_count] = values
+
     return channels
 
 

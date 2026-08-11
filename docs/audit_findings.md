@@ -7,8 +7,9 @@ README, AGENTS.md, and `requirements.txt` at commit `691062e`.
 > addressed on current `main`: **AF-H03** (WLED list registered;
 > `Preset.wled_preset_list_id`; `WLED_Preset.id` = scene name), **AF-H05** (32-test
 > storage suite), **AF-M07** (config split documented), **AF-M08** (logging),
-> **AF-L02** (requirements cleaned). **AF-H02** (per-entry beats) and **AF-H01**
-> (fixtures) remain open. WS-2/3/4 are parked pending show-control redesign.
+> **AF-L02** (requirements cleaned), **AF-H01** (`DMX_Device` collection and
+> address-based resolution). **AF-H02** (per-entry beats) remains open, as does
+> multi-universe output. WS-3/4 are parked pending show-control redesign.
 
 Severity reflects impact **on this project at its current stage** — a pre-runtime
 repository with no deployment, no users, and no hardware output. Nothing here is
@@ -18,7 +19,7 @@ three findings that actually matter.
 
 | ID | Severity | Finding | Blocks now? |
 | --- | --- | --- | --- |
-| [AF-H01](#af-h01) | High | No fixture identity; DMX addresses derived positionally | **Yes** |
+| [AF-H01](#af-h01) | High | No fixture identity; DMX addresses derived positionally | ~~Yes~~ **Resolved** |
 | [AF-H02](#af-h02) | High | Beat duration is absent from the persisted model | **Yes** |
 | [AF-H03](#af-h03) | High | `WLED_Preset_List` unreachable; `WLED_Preset` carries no LEDfx id | ~~Yes~~ **Resolved** |
 | [AF-H04](#af-h04) | High | Force-delete cascade can silently destroy Scenes and user files | No |
@@ -28,7 +29,7 @@ three findings that actually matter.
 | [AF-M03](#af-m03) | Medium | Runtime state is module-global with no concurrency story | No |
 | [AF-M04](#af-m04) | Medium | Model/record duplication requires four-place edits | No |
 | [AF-M05](#af-m05) | Medium | `Library.load()` writes to disk | No |
-| [AF-M06](#af-m06) | Medium | `DMXConfig.universe` defaults to 0, not a valid sACN universe | No |
+| [AF-M06](#af-m06) | Medium | `DMXConfig.universe` defaults to 0, not a valid sACN universe | ~~No~~ **Resolved** |
 | [AF-M07](#af-m07) | Medium | `backend/config/config.py` is an empty file duplicating a real module | ~~No~~ **Resolved** |
 | [AF-M08](#af-m08) | Medium | No logging anywhere in the codebase | ~~No~~ **Resolved** |
 | [AF-L01](#af-l01) | Low | `refresh_hz` default of 120 exceeds DMX512 physical capability | No |
@@ -47,7 +48,14 @@ three findings that actually matter.
 ### AF-H01
 **No fixture identity; DMX start addresses are derived positionally.**
 
-*Evidence.* [`runtime/active.py:23-50`](../backend/runtime/active.py#L23-L50) sorts
+> **Update (Aug 2026): Resolved.** [`DMX_Device`](../backend/models/DMX_Device.py) is a
+> registered root collection; `DMX_Device_Preset.device_id` replaces `order`;
+> `build_channels` resolves each device's slot from `start_address` and raises on
+> overlap or out-of-universe patching. Schema v3 migration synthesises devices from the
+> old `order`. Multi-universe *buffering* is still absent — `universe` is stored and
+> validated, not yet rendered.
+
+*Evidence (at audit time).* [`runtime/active.py:23-50`](../backend/runtime/active.py#L23-L50) sorted
 device states by `order` and packs them contiguously from channel 0, so a device's
 start address is the running sum of every prior device's `channel_count`. No
 `Fixture`/device definition exists anywhere: no `device_id`, `universe`,
@@ -62,12 +70,11 @@ re-addresses everything after it in that look only; address gaps cannot be
 expressed; and multi-universe is impossible. Every other DMX feature is built on
 top of this.
 
-*Recommended action.* Introduce a persisted `fixtures` collection (id, name,
-universe, start_address, channel_count) and replace `order` with `fixture_id` on
-`DMX_Device_Preset`. Additive migration; see
+*Action taken.* A persisted `dmx_devices` collection (id, name, model, mode, universe,
+start_address, channel_count) with `device_id` on `DMX_Device_Preset`. See
 [fixture_and_transport_strategy.md](fixture_and_transport_strategy.md#3-target-fixture-model).
 
-*Blocks:* **yes** — this should be the next implementation branch.
+*Blocks:* no longer.
 
 ---
 
@@ -287,7 +294,7 @@ must pass an explicit `root`.
 ---
 
 ### AF-M06
-**`DMXConfig.universe` defaults to 0.**
+**`DMXConfig.universe` defaults to 0.** — **Resolved**
 
 *Evidence.* [`storage/config.py:14`](../backend/storage/config.py#L14). sACN
 universes are numbered from 1; 0 is not a valid E1.31 universe.
@@ -295,8 +302,11 @@ universes are numbered from 1; 0 is not a valid E1.31 universe.
 *Why it matters.* The default will not work against a conforming receiver, and it
 will be a confusing first failure during transport bring-up.
 
-*Recommended action.* Default to 1 — but **verify against the actual DMX universe
-box first**, since nothing in the repository documents what it expects. See
+*Resolution.* The default is now 1, constrained to `1..63999`, matching
+`DMX_Device.universe`. `host`, `port`, and `priority` were added at the same time,
+recovered from the previous version of the app's config file. The caveat in the
+original recommendation stands: **none of this is verified against the universe
+box**, so bring-up must still confirm it. See
 [fixture_and_transport_strategy.md](fixture_and_transport_strategy.md#6-the-custom-universe-box-boundary).
 
 ---

@@ -79,29 +79,33 @@ pruning logic is the code most likely to break under model changes. WS-6.1 is
 
 ---
 
-## WS-2 · Scene and preset model — **PARKED**
+## WS-2 · Scene and preset model — **PARTLY PARKED**
 
-> **Parked.** The Fixture / per-entry beat / WLED cue-list schema plan assumes a
-> shared beat-sequenced cue architecture that is under reconsideration. Do not
-> implement WS-2 until the show-control model is redesigned. Storage tests
-> (WS-6.1) remain valuable regardless.
+> **2.1 (devices) and 2.3 (WLED lists) are done.** The remaining items — per-entry
+> beat durations (2.2) and field validation beyond device addresses (2.4) — assume a
+> shared beat-sequenced cue architecture that is under reconsideration, and stay
+> parked until the show-control model is redesigned.
 
 The schema changes below are historical sprint text. All would be additive and
 migratable through `REFERENCES` in [`records.py`](../backend/storage/records.py)
 ([D-015](decisions.md#d-015-the-reference-graph-stays-declarative)) if revived.
 
-### 2.1 Introduce the `Fixture` collection
-- **Goal.** A persisted fixture (id, name, universe, start_address, channel_count);
-  `DMX_Device_Preset.order` → `fixture_id`.
-- **Why.** [AF-H01](audit_findings.md#af-h01) — positional address derivation is the
+### 2.1 Introduce the `DMX_Device` collection
+- **Goal.** A persisted device (id, name, model, mode, universe, start_address,
+  channel_count); `DMX_Device_Preset.order` → `device_id`.
+- **Why.** [AF-H01](audit_findings.md#af-h01) — positional address derivation was the
   root blocker for correct multi-look rigs, address gaps, and multi-universe.
-- **Dependencies.** WS-6.1 (storage tests) must land first.
+- **Dependencies.** WS-6.1 (storage tests) — landed first, as planned.
 - **Acceptance.** Fixtures round-trip; `build_channels` resolves addresses from
   fixtures rather than a cursor; a look with non-contiguous addresses produces the
   correct buffer; a look referencing a missing fixture fails the integrity check at
   load; a migration converts existing `order`-based data and is covered by a test.
-- **Status.** Not started; begins after WS-6.1.
-- **Files.** new `backend/models/Fixture.py`;
+- **Status.** **Done** — `dmx_devices` is a registered root collection; `build_channels`
+  resolves addresses from the patch and rejects overlaps and out-of-universe devices;
+  schema v3 migration synthesises devices from `order`. Named `DMX_Device` rather than
+  `Fixture` to match the existing `DMX_*` naming. Multi-universe buffers deferred; the
+  runtime raises for any universe but 1.
+- **Files.** new [`backend/models/DMX_Device.py`](../backend/models/DMX_Device.py);
   [`models/DMX_Device_Preset.py`](../backend/models/DMX_Device_Preset.py);
   [`storage/records.py`](../backend/storage/records.py);
   [`storage/library.py`](../backend/storage/library.py);
@@ -136,8 +140,8 @@ migratable through `REFERENCES` in [`records.py`](../backend/storage/records.py)
   `tests/test_library.py`; `tests/test_migrations.py`.
 
 ### 2.4 Add field validation
-- **Goal.** Bound `channel_values` to 0–255, `channel_count` to 1–512,
-  `sensitivity` to 0.0–1.0, `beats` to ≥ 1.
+- **Goal.** Bound `channel_values` to 0–255, `sensitivity` to 0.0–1.0, `beats` to ≥ 1.
+  `DMX_Device.start_address`/`channel_count`/`universe` are already bounded.
 - **Why.** [AF-M01](audit_findings.md#af-m01), [AF-M02](audit_findings.md#af-m02) —
   invalid values currently validate and would reach the wire.
 - **Dependencies.** [D-016](decisions.md#d-016-audio-event-delivery-mechanism) is
@@ -225,9 +229,10 @@ migratable through `REFERENCES` in [`records.py`](../backend/storage/records.py)
 - **Files.** new `backend/output/dmx_sender.py`.
 
 ### 4.3 Network configuration
-- **Goal.** Reshape `DMXConfig`: destination, unicast/multicast, source name,
-  priority, per-universe destinations; fix the invalid `universe: 0` default and the
-  `refresh_hz: 120` default.
+- **Goal.** Reshape `DMXConfig`: unicast/multicast, source name, per-universe
+  destinations; fix the `refresh_hz: 120` default.
+- **Partly done.** `universe` (now 1), `host`, `port`, and `priority` exist, recovered
+  from the previous app's config file — unverified against the box.
 - **Why.** [AF-M06](audit_findings.md#af-m06), [AF-L01](audit_findings.md#af-l01);
   the current three fields cannot describe a working sACN setup.
 - **Dependencies.** [D-017](decisions.md#d-017-sacn-unicast-versus-multicast), and

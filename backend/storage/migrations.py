@@ -8,11 +8,11 @@ from uuid import uuid4
 
 from storage.json_store import StorageError, read_collection, read_json, write_collection, write_json
 from storage.paths import config_path, data_dir, ensure_layout, ilda_dir, new_backup_dir
-from storage.records import PRESETS, WLED_PRESET_LISTS
+from storage.records import DMX_DEVICE_PRESETS, DMX_DEVICES, PRESETS, WLED_PRESET_LISTS
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 MigrationStep = Callable[[Path], None]
 
@@ -123,3 +123,64 @@ def migrate_preset_wled_list_reference(root: Path) -> None:
 
     write_collection(WLED_PRESET_LISTS, lists, 2, root)
     write_collection(PRESETS, updated_presets, 2, root)
+
+
+@migration(2)
+def migrate_device_presets_to_devices(root: Path) -> None:
+    """
+    Schema 2 → 3: ``DMX_Device_Preset.order`` becomes ``device_id``.
+
+    One ``DMX_Device`` is synthesised per distinct ``order``, and addresses are
+    assigned by the packing rule the runtime used before — each device starts where
+    the previous order ended — so existing looks resolve to the same channels.
+    """
+    device_presets = read_collection(DMX_DEVICE_PRESETS, root)
+    devices: Dict[str, Dict[str, Any]] = read_collection(DMX_DEVICES, root)
+
+    legacy = {
+        preset_id: item
+        for preset_id, item in device_presets.items()
+        if "device_id" not in item
+    }
+
+    counts_by_order: Dict[int, int] = {}
+    for preset_id, item in legacy.items():
+        order = item.get("order")
+        count = item.get("channel_count")
+        if not isinstance(order, int) or not isinstance(count, int) or count < 1:
+            raise StorageError(
+                f"dmx_device_presets '{preset_id}' has no usable order/channel_count to migrate"
+            )
+        # Looks may disagree; the widest claim wins so no device loses channels.
+        counts_by_order[order] = max(counts_by_order.get(order, 0), count)
+
+    device_id_by_order: Dict[int, str] = {}
+    cursor = 1
+    for order in sorted(counts_by_order):
+        channel_count = counts_by_order[order]
+        device_id = uuid4().hex
+        devices[device_id] = {
+            "id": device_id,
+            "name": f"Device {order}",
+            "model": None,
+            "mode": None,
+            "universe": 1,
+            "start_address": cursor,
+            "channel_count": channel_count,
+        }
+        device_id_by_order[order] = device_id
+        cursor += channel_count
+
+    updated_presets: Dict[str, Dict[str, Any]] = {}
+    for preset_id, item in device_presets.items():
+        if preset_id not in legacy:
+            updated_presets[preset_id] = item
+            continue
+        updated = dict(item)
+        order = updated.pop("order")
+        updated.pop("channel_count", None)
+        updated["device_id"] = device_id_by_order[order]
+        updated_presets[preset_id] = updated
+
+    write_collection(DMX_DEVICES, devices, 3, root)
+    write_collection(DMX_DEVICE_PRESETS, updated_presets, 3, root)

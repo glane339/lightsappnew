@@ -36,7 +36,7 @@ is wired into a show loop.
 | Layer | Status | Evidence |
 | --- | --- | --- |
 | Persistence / storage | **Substantially implemented** | [`backend/storage/`](../backend/storage/) — schema v2, migrations, integrity |
-| Data model | **Partially implemented** | 11 models; `WLED_Preset_List` registered; per-entry beats still absent |
+| Data model | **Partially implemented** | 12 models; `DMX_Device` and `WLED_Preset_List` registered; per-entry beats still absent |
 | Runtime state | **Prototype seed (82 lines)** | [`backend/runtime/active.py`](../backend/runtime/active.py) |
 | Scene controller | **Absent** | no equivalent module |
 | Audio / BPM / beat detection | **Absent (configuration placeholders only)** | `AudioConfig` and `Scene.sensitivity` persist settings; no signal processing |
@@ -58,9 +58,11 @@ the largest single subsystem.
 Nothing is *supported* yet in the sense of working output. The repository models
 three intended output domains:
 
-1. **DMX512 over E1.31/sACN** — data modelled ([`DMX_Preset`](../backend/models/DMX_Preset.py),
+1. **DMX512 over E1.31/sACN** — data modelled ([`DMX_Device`](../backend/models/DMX_Device.py),
+   [`DMX_Preset`](../backend/models/DMX_Preset.py),
    [`DMX_Device_Preset`](../backend/models/DMX_Device_Preset.py),
    [`Active_DMX_Channels`](../backend/models/Active_DMX_Channels.py)); transport absent.
+   Channel tables per model in [docs/fixtures/](fixtures/README.md).
 2. **WLED via LEDfx** — [`WLED_Preset`](../backend/models/WLED_Preset.py) stores the
    LEDfx scene name as `id`; [`WLED_Preset_List`](../backend/models/WLED_Preset_List.py)
    is persisted and referenced from [`Preset`](../backend/models/Preset.py). HTTP
@@ -77,20 +79,22 @@ What the code actually does today:
 
 - Opens a per-user data folder (`%LOCALAPPDATA%\LightsApp` on Windows) and creates
   the `data/`, `ilda/`, `backups/`, `logs/` layout — [`storage/paths.py`](../backend/storage/paths.py).
-- Loads and saves nine normalized JSON collections, one file per model class,
+- Loads and saves ten normalized JSON collections, one file per model class,
   with crash-safe atomic writes and corrupt-file quarantine —
   [`storage/json_store.py`](../backend/storage/json_store.py).
 - Enforces referential integrity across the object graph on load, on save, and on
   insert; supports cascade delete, orphan pruning, and referrer lookup —
   [`storage/library.py`](../backend/storage/library.py).
-- Versions the data folder (schema **v2**), snapshots before migrating, and
-  wraps legacy `Preset.wled_preset_id` values into one-entry WLED lists —
+- Versions the data folder (schema **v3**), snapshots before migrating, wraps legacy
+  `Preset.wled_preset_id` values into one-entry WLED lists, and synthesises
+  `DMX_Device` rows from the old positional `order` —
   [`storage/migrations.py`](../backend/storage/migrations.py).
 - Exports/imports the whole data folder as a zip, with zip-slip protection —
   [`storage/archive.py`](../backend/storage/archive.py).
 - Imports `.ild` files as opaque blobs and reconciles the folder with the
   database on load — [`storage/ilda_blobs.py`](../backend/storage/ilda_blobs.py).
-- Resolves a scene to a flat 512-value DMX channel buffer in memory —
+- Resolves a look into a 512-value DMX buffer using each device's patched start
+  address, rejecting overlaps and out-of-universe devices —
   [`runtime/active.py`](../backend/runtime/active.py).
 - Polls LEDfx for scene names and upserts `WLED_Preset` rows when enabled —
   [`ledfx/scene_sync.py`](../backend/ledfx/scene_sync.py).
@@ -100,10 +104,9 @@ What the code actually does today:
 
 Ranked by how much they block a working system:
 
-1. **No physical device / fixture model.** DMX start addresses are *derived
-   positionally* by packing device states end-to-end in `order` sequence
-   ([`active.py:37-49`](../backend/runtime/active.py#L37-L49)). There is no fixture
-   identity, universe, start address, or channel profile anywhere. See
+1. **One universe only.** `DMX_Device.universe` is persisted but
+   [`runtime/active.py`](../backend/runtime/active.py) buffers a single universe and
+   raises for anything else. Multi-universe needs per-universe buffers. See
    [fixture_and_transport_strategy.md](fixture_and_transport_strategy.md).
 2. **Beat-driven sequencing is not represented.** `DMX_Preset_List` has no beat
    field; `WLED_Preset_List.beats` is a single scalar on the whole list, not per
@@ -141,7 +144,7 @@ names the concrete repository type.
 | **DMX cue list** | Ordered, beat-advanced sequence of DMX looks | [`DMX_Preset_List`](../backend/models/DMX_Preset_List.py) |
 | **DMX look** | One complete lighting state across all devices | [`DMX_Preset`](../backend/models/DMX_Preset.py) |
 | **Device state** | One device's channel values inside a look | [`DMX_Device_Preset`](../backend/models/DMX_Device_Preset.py) |
-| **Fixture** | Definition of a physical device (address, profile) | *does not exist* |
+| **Device / fixture** | A physical device and its patch (universe, start address, channel count) | [`DMX_Device`](../backend/models/DMX_Device.py) |
 | **Universe buffer** | The live 512 channel values sent to the wire | [`Active_DMX_Channels`](../backend/models/Active_DMX_Channels.py) |
 | **WLED cue list** | Ordered sequence of LEDfx presets | [`WLED_Preset_List`](../backend/models/WLED_Preset_List.py) |
 | **LEDfx preset** | An effect configuration owned by LEDfx | [`WLED_Preset`](../backend/models/WLED_Preset.py) — `id` is the scene name |
@@ -186,7 +189,7 @@ flowchart LR
         G1["Scene Controller"]
         G2["Audio Processor"]
         G3["Beat Sequencer"]
-        G4["Fixture / address model"]
+        G4["Multi-universe buffers"]
         G5["E1.31 Sender"]
         G6["Show loop wiring<br/>LEDfx activation"]
         G7["ILDA Processor"]

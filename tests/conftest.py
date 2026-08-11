@@ -11,6 +11,7 @@ if str(BACKEND) not in sys.path:
     sys.path.insert(0, str(BACKEND))
 
 from logging_setup import reset_logging_for_tests  # noqa: E402
+from models.DMX_Device import DMX_Device  # noqa: E402
 from models.DMX_Device_Preset import DMX_Device_Preset  # noqa: E402
 from models.DMX_Preset import DMX_Preset  # noqa: E402
 from models.DMX_Preset_List import DMX_Preset_List  # noqa: E402
@@ -22,6 +23,7 @@ from models.WLED_Preset_List import WLED_Preset_List  # noqa: E402
 from storage.library import Library  # noqa: E402
 from storage.records import (  # noqa: E402
     DMX_DEVICE_PRESETS,
+    DMX_DEVICES,
     DMX_PRESET_LISTS,
     DMX_PRESETS,
     ILDA_FRAME_LISTS,
@@ -54,10 +56,11 @@ def library(data_root: Path) -> Library:
 
 def build_minimal_scene_graph(library: Library) -> Scene:
     """
-    Leaves-up graph: device → dmx preset → list → wled → wled list → preset → ilda → scene.
+    Leaves-up graph: device → device preset → look → list → wled → preset → ilda → scene.
     """
-    device = DMX_Device_Preset(order=0, channel_count=3, channel_values=[10, 20, 30])
-    dmx_preset = DMX_Preset(dmx_device_preset_ids=[device.id])
+    device = DMX_Device(name="Test Par", start_address=1, channel_count=3)
+    device_preset = DMX_Device_Preset(device_id=device.id, channel_values=[10, 20, 30])
+    dmx_preset = DMX_Preset(dmx_device_preset_ids=[device_preset.id])
     dmx_list = DMX_Preset_List(dmx_preset_ids=[dmx_preset.id])
     wled = WLED_Preset(id="scene-alpha")
     wled_list = WLED_Preset_List(wled_preset_ids=[wled.id], beats=0)
@@ -70,6 +73,7 @@ def build_minimal_scene_graph(library: Library) -> Scene:
     )
 
     library.add(device)
+    library.add(device_preset)
     library.add(dmx_preset)
     library.add(dmx_list)
     library.add(wled)
@@ -82,6 +86,7 @@ def build_minimal_scene_graph(library: Library) -> Scene:
 
 __all__ = [
     "DMX_DEVICE_PRESETS",
+    "DMX_DEVICES",
     "DMX_PRESET_LISTS",
     "DMX_PRESETS",
     "ILDA_FRAME_LISTS",

@@ -18,6 +18,7 @@ network output yet. See [docs/project_overview.md](docs/project_overview.md).
   - `logging_setup.py` — file + stderr logging into the data-folder `logs/`
 - `tests/` — pytest suite (storage layer; uses a temp data root)
 - `docs/` — architecture documentation ([start here](docs/project_overview.md))
+  - `fixtures/` — per-model DMX channel tables ([index](docs/fixtures/README.md))
 - `requirements.txt` — Python dependencies
 - `AGENTS.md` — Instructions for AI coding agents
 

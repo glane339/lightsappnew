@@ -112,24 +112,27 @@ is right, and the docstring says so. Gaps:
 
 ## 3. Target fixture model
 
-**Proposed, not implemented.** The minimum change that solves §1.1 is to introduce
-a persisted `Fixture` collection holding the patch, and to reference it by id from
-device states:
+**Implemented**, as `DMX_Device` rather than `Fixture` — the name matches the existing
+`DMX_*` models and the term the rig owner uses.
 
 ```text
-Fixture                          (new persisted collection — the rig's patch)
+DMX_Device                       persisted root collection — the rig's patch
 ├── id
 ├── name                         "front wash L"
-├── universe                     1..63999
+├── model                        "chauvet_gigbar_move" → docs/fixtures/<model>.md
+├── mode                         the manual's max-channel mode name
+├── universe                     1.. (only 1 is rendered today)
 ├── start_address                1..512
-├── channel_count
-└── profile_id                   optional, deferred
+└── channel_count                1..512
 
-DMX_Device_Preset                (existing — a device's values inside one look)
+DMX_Device_Preset                a device's values inside one look
 ├── id
-├── fixture_id                   NEW: replaces positional `order`
+├── device_id                    replaces positional `order`
 └── channel_values
 ```
+
+Per-channel semantics are **documented, not stored** — see
+[docs/fixtures/](fixtures/README.md). `model` is the link between the two.
 
 Why this specific shape:
 
@@ -144,12 +147,12 @@ Why this specific shape:
 - Semantic profiles can be added later as an optional `profile_id`, without
   reworking anything.
 
-**Migration path.** This is an additive schema change: add the `fixtures`
-collection, bump `SCHEMA_VERSION`, and register a step in
-[`migrations.py`](../backend/storage/migrations.py) that synthesises one `Fixture`
-per distinct `order` and rewrites device states to point at it. The
-snapshot-before-migrate machinery already exists
-([`migrations.py:66`](../backend/storage/migrations.py#L66)) and covers the risk.
+**Migration path.** Landed as the schema v2 → v3 step in
+[`migrations.py`](../backend/storage/migrations.py): one `DMX_Device` per distinct
+`order`, addressed by the old packing rule so existing looks resolve to the same
+channels, then device states rewritten to point at it. Where looks disagreed on
+`channel_count` for the same `order`, the widest claim wins so no device loses
+channels.
 
 **Fixture profiles** (mapping `dimmer`/`red`/`green`/`blue`/`pan`/`tilt`/`strobe`
 to channel offsets) are a genuine convenience for a rig with a handful of fixture
@@ -202,23 +205,33 @@ flowchart LR
 ### 5.1 Current configuration surface
 
 ```python
-# backend/storage/config.py:13
+# backend/storage/config.py
 class DMXConfig(BaseModel):
-    universe: int = 0
+    universe: int = Field(default=1, ge=1, le=63999)
+    host: str = "127.0.0.1"
+    port: int = Field(default=5568, ge=1, le=65535)
+    priority: int = Field(default=100, ge=0, le=200)
     interface: Optional[str] = None
-    refresh_hz: int = 120
+    refresh_hz: int = Field(default=120, ge=1)
 ```
 
-Three fields, and **all three need attention** before transport work:
+`host`, `port`, and `priority` were recovered from the previous version of the app's
+config file, which is the only record of what the rig was actually driven with;
+`universe` was corrected from an invalid 0 at the same time
+([AF-M06](audit_findings.md#af-m06)). **None of it is verified against the universe
+box** — it is a starting point recovered from history, not a tested configuration.
+
+What still needs attention:
 
 | Field | Issue |
 | --- | --- |
-| `universe: int = 0` | sACN universes are numbered from **1**; 0 is not a valid sACN universe. A default of 0 will not work against a conforming receiver. Verify against the actual box before changing. [AF-M06](audit_findings.md#af-m06) |
+| `host = "127.0.0.1"` | Loopback, so this is whatever the old app was tested against rather than the box's real address. Unicast/multicast selection is still not expressible. |
 | `interface` | Ambiguous: is this a local NIC to bind to, or a destination? Both are needed and this is one field. |
 | `refresh_hz = 120` | Physical DMX512 tops out near 44 Hz for a full 512-slot frame. 120 Hz of E1.31 traffic cannot be reproduced on the bus and will be coalesced or dropped by the gateway. [AF-L01](audit_findings.md#af-l01) |
 
-Absent entirely: destination IP, unicast/multicast selection, source name, priority,
-and per-universe destination mapping.
+Still absent: unicast/multicast selection, source name, and per-universe destination
+mapping. Slot count is deliberately not configurable — it is `UNIVERSE_SIZE`, fixed
+by the protocol, where the old config restated it as `total_channels: 512`.
 
 ### 5.2 Open transport decisions
 

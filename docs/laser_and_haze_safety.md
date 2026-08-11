@@ -183,6 +183,11 @@ about the *boundary*; a reader should not infer that a playback path exists.
 no model, no config section, no DMX device state identified as a hazer, and no
 mention of it anywhere in the source.
 
+The previous version of the app carried a 2-channel `haze` entry in its data folder,
+patched after the two bars. It is **not** part of the current rig and is deliberately
+not modelled or seeded — the notes below stand as a record for the future rather than
+a description of anything present.
+
 If haze is added later it will most plausibly arrive as an ordinary DMX fixture,
 which means it inherits the fixture model discussed in
 [fixture_and_transport_strategy.md](fixture_and_transport_strategy.md#3-target-fixture-model)

@@ -215,10 +215,11 @@ library dependency will be required.
 **Alternatives.** Art-Net (viable; the box's actual protocol has not been verified
 from the repository); USB DMX (rejected: the hardware is networked).
 
-**Follow-up.** `DMXConfig` lacks a destination, unicast/multicast setting, source
-name, and priority; `universe` defaults to an invalid 0
-([AF-M06](audit_findings.md#af-m06)). **The box's actual expectations are
-unverified** and must be confirmed before this is marked Accepted.
+**Follow-up.** `DMXConfig` now carries `universe`, `host`, `port`, and `priority`,
+recovered from the previous version of the app's config file
+([AF-M06](audit_findings.md#af-m06)); it still lacks a unicast/multicast setting and
+a source name. **The box's actual expectations remain unverified** — recovered values
+are not tested ones — and must be confirmed before this is marked Accepted.
 
 ---
 

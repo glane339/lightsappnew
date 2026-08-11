@@ -44,7 +44,8 @@ backend/
 │   ├── Preset.py            wled_preset_list_id → WLED_Preset_List
 │   ├── DMX_Preset_List.py
 │   ├── DMX_Preset.py
-│   ├── DMX_Device_Preset.py
+│   ├── DMX_Device_Preset.py device_id + channel_values
+│   ├── DMX_Device.py        the patch: universe, start_address, channel_count
 │   ├── WLED_Preset.py       id = LEDfx scene name
 │   ├── WLED_Preset_List.py  registered in storage (schema v2)
 │   ├── ILDA_Frame_List.py
@@ -56,9 +57,9 @@ backend/
 └── storage/
     ├── paths.py             Data-folder layout, platformdirs
     ├── json_store.py        Atomic write, corrupt-file quarantine
-    ├── records.py           On-disk schemas + the reference graph (9 collections)
+    ├── records.py           On-disk schemas + the reference graph (10 collections)
     ├── library.py           In-memory object graph, CRUD, integrity, cascade
-    ├── migrations.py        Schema v2; v1→v2 wraps wled_preset_id in lists
+    ├── migrations.py        Schema v3; v2→v3 synthesises devices from `order`
     ├── ilda_blobs.py        .ild file storage, id validation
     ├── config.py            AppConfig (dmx/ledfx/ilda/audio/ui)
     └── archive.py           Zip export/import with traversal guards
@@ -143,9 +144,17 @@ classDiagram
     }
     class DMX_Device_Preset {
         +str id
-        +int order
-        +int channel_count
+        +str device_id
         +List~int~ channel_values
+    }
+    class DMX_Device {
+        +str id
+        +str name
+        +str model
+        +str mode
+        +int universe
+        +int start_address
+        +int channel_count
     }
     class WLED_Preset_List {
         +str id
@@ -169,6 +178,7 @@ classDiagram
     Preset --> WLED_Preset_List : wled_preset_list_id
     DMX_Preset_List --> DMX_Preset : dmx_preset_ids[]
     DMX_Preset --> DMX_Device_Preset : dmx_device_preset_ids[]
+    DMX_Device_Preset --> DMX_Device : device_id
     WLED_Preset_List --> WLED_Preset : wled_preset_ids[]
     ILDA_Frame_List --> ILDA_Frame : ilda_frame_ids[]
 ```
@@ -179,12 +189,17 @@ is what drives integrity checks, cascade delete, orphan pruning and referrer loo
 Encoding the schema as data rather than as traversal code is the strongest design
 decision in the repository.
 
+`dmx_devices` is a **root collection** alongside `scenes` and `ilda_frames`: the rig's
+patch exists whether or not a look references it, so orphan pruning must leave a
+newly-added device alone.
+
 Remaining structural gaps:
 
 - **Beat duration is unrepresented.** No entry in either cue list carries a per-entry
   beat count. `WLED_Preset_List.beats` is a single scalar on the whole list.
-- **No fixture identity.** DMX addresses are still derived positionally in
-  [`runtime/active.py`](../backend/runtime/active.py).
+- **One universe only.** `DMX_Device.universe` is persisted, but
+  [`runtime/active.py`](../backend/runtime/active.py) buffers universe 1 and rejects
+  anything else rather than silently dropping it.
 
 ### 2.4 Current DMX address derivation
 
@@ -485,7 +500,7 @@ Full detail with severities in [audit_findings.md](audit_findings.md). Summary:
 
 | # | Debt | Impact |
 | --- | --- | --- |
-| 1 | No fixture/device identity; addresses derived positionally | Blocks correct multi-look rigs and any second universe |
+| 1 | Single-universe buffer; `DMX_Device.universe` persisted but not honoured | Blocks a second universe |
 | 2 | Beat duration absent from cue-list entries | Blocks beat-driven sequencing |
 | 3 | Show loop absent; LEDfx client unwired | No automatic preset activation |
 | 4 | Model/record duplication with hand-written converters | Every field change requires multiple edits |

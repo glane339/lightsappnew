@@ -8,6 +8,7 @@ from pydantic import BaseModel, ValidationError
 
 logger = logging.getLogger(__name__)
 
+from models.DMX_Device import DMX_Device
 from models.DMX_Device_Preset import DMX_Device_Preset
 from models.DMX_Preset import DMX_Preset
 from models.DMX_Preset_List import DMX_Preset_List
@@ -31,6 +32,7 @@ from storage.paths import collection_path, ensure_layout
 from storage.records import (
     COLLECTION_ORDER,
     DMX_DEVICE_PRESETS,
+    DMX_DEVICES,
     DMX_PRESET_LISTS,
     DMX_PRESETS,
     ILDA_FRAME_LISTS,
@@ -43,6 +45,7 @@ from storage.records import (
     WLED_PRESET_LISTS,
     WLED_PRESETS,
     DMXDevicePresetRecord,
+    DMXDeviceRecord,
     DMXPresetListRecord,
     DMXPresetRecord,
     ILDAFrameListRecord,
@@ -68,6 +71,7 @@ MODEL_TYPES: Dict[str, Type[BaseModel]] = {
     DMX_PRESET_LISTS: DMX_Preset_List,
     DMX_PRESETS: DMX_Preset,
     DMX_DEVICE_PRESETS: DMX_Device_Preset,
+    DMX_DEVICES: DMX_Device,
     WLED_PRESET_LISTS: WLED_Preset_List,
     WLED_PRESETS: WLED_Preset,
     ILDA_FRAME_LISTS: ILDA_Frame_List,
@@ -104,6 +108,7 @@ class Library:
         self.dmx_preset_lists: Dict[str, DMX_Preset_List] = {}
         self.dmx_presets: Dict[str, DMX_Preset] = {}
         self.dmx_device_presets: Dict[str, DMX_Device_Preset] = {}
+        self.dmx_devices: Dict[str, DMX_Device] = {}
         self.wled_preset_lists: Dict[str, WLED_Preset_List] = {}
         self.wled_presets: Dict[str, WLED_Preset] = {}
         self.ilda_frame_lists: Dict[str, ILDA_Frame_List] = {}
@@ -116,6 +121,7 @@ class Library:
             DMX_PRESET_LISTS: self.dmx_preset_lists,
             DMX_PRESETS: self.dmx_presets,
             DMX_DEVICE_PRESETS: self.dmx_device_presets,
+            DMX_DEVICES: self.dmx_devices,
             WLED_PRESET_LISTS: self.wled_preset_lists,
             WLED_PRESETS: self.wled_presets,
             ILDA_FRAME_LISTS: self.ilda_frame_lists,
@@ -167,9 +173,18 @@ class Library:
         if collection == DMX_DEVICE_PRESETS:
             return DMX_Device_Preset(
                 id=record.id,
-                order=record.order,
-                channel_count=record.channel_count,
+                device_id=record.device_id,
                 channel_values=list(record.channel_values),
+            )
+        if collection == DMX_DEVICES:
+            return DMX_Device(
+                id=record.id,
+                name=record.name,
+                model=record.model,
+                mode=record.mode,
+                universe=record.universe,
+                start_address=record.start_address,
+                channel_count=record.channel_count,
             )
         if collection == WLED_PRESET_LISTS:
             return WLED_Preset_List(
@@ -254,9 +269,18 @@ class Library:
         if collection == DMX_DEVICE_PRESETS:
             return DMXDevicePresetRecord(
                 id=obj.id,
-                order=obj.order,
-                channel_count=obj.channel_count,
+                device_id=obj.device_id,
                 channel_values=list(obj.channel_values),
+            )
+        if collection == DMX_DEVICES:
+            return DMXDeviceRecord(
+                id=obj.id,
+                name=obj.name,
+                model=obj.model,
+                mode=obj.mode,
+                universe=obj.universe,
+                start_address=obj.start_address,
+                channel_count=obj.channel_count,
             )
         if collection == WLED_PRESET_LISTS:
             return WLEDPresetListRecord(
