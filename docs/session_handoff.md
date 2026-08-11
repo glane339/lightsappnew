@@ -1,5 +1,9 @@
 # Session Handoff
 
+> **Historical.** This documents the architecture-review session that created the
+> initial `docs/` set at commit `691062e`. For current status see
+> [project_overview.md](project_overview.md) and [current_sprint.md](current_sprint.md).
+
 Contributor handoff from the architecture-review session that created this
 documentation set.
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import shutil
 import tempfile
@@ -8,6 +9,8 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from storage.paths import collection_path, new_backup_dir
+
+logger = logging.getLogger(__name__)
 
 
 class StorageError(Exception):
@@ -27,6 +30,7 @@ class CorruptFileError(StorageError):
 def quarantine(path: Path, label: str, root: Optional[Path] = None) -> Path:
     destination = new_backup_dir(label, root) / path.name
     shutil.move(str(path), str(destination))
+    logger.warning("quarantined %s -> %s (%s)", path, destination, label)
     return destination
 
 

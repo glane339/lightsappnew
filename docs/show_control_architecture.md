@@ -27,8 +27,8 @@ A recurring failure mode in show-control software is letting sequence state leak
 into preset configuration — e.g. storing "current index" on the cue list object.
 `WLED_Preset_List.beats` is arguably an early instance of this ambiguity: it is a
 single scalar on the list, and it is unclear whether it is meant as configuration
-(a per-entry duration, misplaced) or as a runtime counter (which must not be
-persisted). It is currently neither, because the model is unreachable.
+(single scalar on the list, not per entry). Per-entry beat shape is still absent
+([AF-H02](audit_findings.md#af-h02)); WS-2 is parked pending show-control redesign.
 
 ---
 

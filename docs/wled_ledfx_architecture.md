@@ -1,9 +1,9 @@
 # WLED / LEDfx Architecture
 
-> **Status: LEDfx client and scene sync exist; beat sequencing and cue-list
-> registration do not.** `backend/ledfx/` talks to LEDfx over HTTP and can
-> autopopulate `WLED_Preset` rows from scene names. `WLED_Preset_List` is still
-> unreachable. There is no Scene Controller wiring yet.
+> **Status: LEDfx client, scene sync, and WLED cue-list storage exist; no show loop
+> yet.** `backend/ledfx/` talks to LEDfx over HTTP when `ledfx.enabled` is true and
+> can autopopulate `WLED_Preset` rows from scene names. `Preset` references a
+> `WLED_Preset_List`; beat sequencing and Scene Controller wiring are still absent.
 
 ---
 
@@ -30,30 +30,43 @@ different and much larger system. See
 
 Contrast with DMX, which uses a completely separate transport: **E1.31 carries DMX
 universe data to the DMX box; LEDfx handles WLED.** The two paths share only the
-beat stream.
+beat stream (when a show loop exists).
 
 ---
 
 ## 2. Current state
 
-Two models exist. Neither is usable.
+### 2.1 Models and storage
 
 ```python
-# backend/models/WLED_Preset.py — complete file body
+# backend/models/WLED_Preset.py
 class WLED_Preset(BaseModel):
     """A LedFx scene mirrored into the library. ``id`` is the LedFx scene name."""
     id: str
 ```
 
 ```python
-# backend/models/WLED_Preset_List.py — complete file body
+# backend/models/WLED_Preset_List.py
 class WLED_Preset_List(BaseModel):
     id: str = Field(default_factory=lambda: uuid4().hex)
     wled_preset_ids: List[str] = []
     beats: int = 0
 ```
 
-### 2.1 `WLED_Preset.id` is the LEDfx scene name
+```python
+# backend/models/Preset.py
+class Preset(BaseModel):
+    id: str = Field(default_factory=lambda: uuid4().hex)
+    dmx_preset_list_id: str
+    wled_preset_list_id: str
+```
+
+`WLED_Preset_List` is registered in [`storage/records.py`](../backend/storage/records.py)
+(`wled_preset_lists` collection). `Preset` references a list on both sides. Schema
+**v2** migration wraps legacy `wled_preset_id` values into one-entry lists — see
+[`storage/migrations.py`](../backend/storage/migrations.py).
+
+### 2.2 `WLED_Preset.id` is the LEDfx scene name
 
 **Accepted ([D-018](decisions.md#d-018-ledfx-preset-identifier-form)).** The
 entity in LEDfx is a *scene*. The app stores that scene's human-readable `name`
@@ -62,49 +75,15 @@ as `WLED_Preset.id` — there is no separate LEDfx id field and no generated UUI
 `wled_presets`. Activation resolves name → LEDfx slug in memory from the latest
 list. See §6.
 
-### 2.2 `WLED_Preset_List` is unreachable
+### 2.3 Remaining model gaps
 
-`WLED_Preset_List` appears **nowhere** outside its own file. It is absent from
-`RECORD_TYPES`, `COLLECTION_ORDER`, `REFERENCES`, and `ROOT_COLLECTIONS` in
-[`records.py`](../backend/storage/records.py), and from `MODEL_TYPES` in
-[`library.py:59-68`](../backend/storage/library.py#L59-L68). Consequences:
+- **Per-entry beats are absent.** `WLED_Preset_List.beats` is one scalar for the
+  whole list; `DMX_Preset_List` has no beat field at all. Beat-driven sequencing
+  cannot be built on the current shape ([AF-H02](audit_findings.md#af-h02)).
+- **No show loop.** Nothing advances cue indices or calls `activate_scene` on beat
+  changes.
 
-- It cannot be loaded or saved — `Library` has no map for it.
-- `Library.add()` raises `StorageError("... is not a storable model")` for it
-  ([`library.py:263-265`](../backend/storage/library.py#L263-L265)).
-- Nothing can reference it, because `Preset.wled_preset_id` points at
-  `WLED_Preset`, not at the list.
-
-It is dead code that describes an intended design. Verified by direct search:
-
-```
-$ grep -rn "WLED_Preset_List\|wled_preset_list" --include=*.py .
-./backend/models/WLED_Preset_List.py:5:class WLED_Preset_List(BaseModel):
-```
-
-### 2.3 The beats field is on the wrong object
-
-`beats: int = 0` is a single scalar on the *list*, while the intended design gives
-each **entry** its own beat duration. As written, every preset in a list would hold
-for the same number of beats — and the default of `0` is not a valid duration under
-any interpretation.
-
-### 2.4 The `Preset` asymmetry
-
-```python
-# backend/models/Preset.py
-class Preset(BaseModel):
-    id: str
-    dmx_preset_list_id: str    # → a sequenceable list
-    wled_preset_id: str        # → a single preset, NOT a list
-```
-
-The DMX side references a cue list and can therefore be sequenced. The WLED side
-references one preset and cannot. **Beat-driven WLED sequencing is structurally
-impossible on the current model**, which is the concrete blocker for this
-subsystem.
-
-### 2.5 Configuration
+### 2.4 Configuration
 
 ```python
 # backend/storage/config.py
@@ -115,37 +94,36 @@ class LedfxConfig(BaseModel):
     request_timeout_s: float = 2.0
 ```
 
-Held on `AppConfig.ledfx`. Nothing opens a socket unless `enabled` is true.
+Compile-time defaults in [`backend/config/config.py`](../backend/config/config.py)
+seed these fields when `config.json` is first written. Nothing opens a socket unless
+`enabled` is true.
+
+### 2.5 Implemented modules
+
+| Module | Role |
+| --- | --- |
+| [`ledfx/client.py`](../backend/ledfx/client.py) | `LedFxClient`, `NullLedFxClient`, HTTP to `/api/scenes` |
+| [`ledfx/scene_sync.py`](../backend/ledfx/scene_sync.py) | Background poll; upserts missing scene names |
+| [`ledfx/service.py`](../backend/ledfx/service.py) | `build_ledfx_stack` factory |
 
 ---
 
-## 3. Target model
+## 3. Target model (partially landed)
 
-**Proposed.** Two changes bring the WLED path level with the DMX path:
+**Done:** `Preset.wled_preset_list_id`, registered `WLED_Preset_List`, `WLED_Preset.id`
+= scene name.
+
+**Still proposed** (parked with WS-2 in [current_sprint.md](current_sprint.md)):
 
 ```text
-Preset
-├── dmx_preset_list_id
-└── wled_preset_list_id      CHANGED: was wled_preset_id
-
-WLED_Preset_List             REGISTERED with the storage layer
-└── entries[]                CHANGED: was a flat id list + one scalar `beats`
+WLED_Preset_List
+└── entries[]                CHANGED: was flat wled_preset_ids + one scalar beats
     ├── wled_preset_id
     └── beats                per entry
-
-WLED_Preset
-└── id                       the LEDfx scene name (not a UUID)
 ```
 
-The same per-entry beat problem exists on the DMX side —
-`DMX_Preset_List.dmx_preset_ids` is a flat list with no beat field at all — so the
-entry shape should be introduced for **both** lists in one change, or they will
-diverge. See [current_sprint.md](current_sprint.md#ws-2--scene-and-preset-model).
-
-All of this is additive/migratable through the existing
-[`migrations.py`](../backend/storage/migrations.py) mechanism, and registering
-`WLED_Preset_List` is a matter of adding it to `RECORD_TYPES`, `COLLECTION_ORDER`,
-`MODEL_TYPES`, and `REFERENCES` — the reference-graph machinery does the rest.
+The same per-entry beat shape should apply to `DMX_Preset_List` when the show-control
+model is redesigned.
 
 ### 3.1 Preset identifiers
 
@@ -176,9 +154,8 @@ Sync stores `"Living Room"`; activate sends
 
 ## 4. Beat-driven iteration
 
-Identical state machine to the DMX side, and **it must be the same class** — see
-[show_control_architecture.md](show_control_architecture.md#5-beat-driven-sequencing).
-The only difference is the consumer:
+**Target only** — no sequencer exists yet. Identical state machine to the DMX side;
+see [show_control_architecture.md](show_control_architecture.md#5-beat-driven-sequencing).
 
 ```mermaid
 flowchart TD
@@ -273,8 +250,8 @@ LedfxConfig                         AppConfig.ledfx
 └── request_timeout_s: float = 2.0
 ```
 
-No credentials belong in the repository; overrides live in the user's
-`config.json` (per-user data folder, not git-tracked).
+Compile-time defaults: [`backend/config/config.py`](../backend/config/config.py).
+No credentials belong in the repository; overrides live in the user's `config.json`.
 
 ---
 
@@ -282,12 +259,10 @@ No credentials belong in the repository; overrides live in the user's
 
 Three layers, none requiring a strip, a controller, or a running LEDfx:
 
-1. **Fake client.** A `NullLedfxClient` (records calls, succeeds) and a
-   `FlakyLedfxClient` (fails on demand) let the sequencer and Scene Controller be
-   tested end-to-end. Dedup logic is fully testable here: assert that N beats
-   across one entry produce exactly one call.
-2. **HTTP-level.** Test the real client against a stub HTTP server or a mocked
-   transport, asserting on method, path, and body. Never against a real LEDfx.
+1. **Fake client.** `NullLedFxClient` is the default when disabled. Dedup logic is
+   testable once a show loop exists.
+2. **HTTP-level.** Test the real client against a stub HTTP server or mocked
+   transport. Never against a real LEDfx in CI.
 3. **Live LEDfx, no hardware.** LEDfx runs without physical WLED devices attached,
    which makes it a genuine manual integration target that risks nothing.
 

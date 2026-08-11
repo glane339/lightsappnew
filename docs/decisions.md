@@ -133,7 +133,8 @@ DMX universe (rejected: conflates two very different transports and discards LED
 effect engine).
 
 **Follow-up.** `WLED_Preset.id` is the LEDfx scene name ([D-018](#d-018-ledfx-preset-identifier-form));
-`WLED_Preset_List` is still unreachable — [AF-H03](audit_findings.md#af-h03).
+`WLED_Preset_List` is registered; `Preset.wled_preset_list_id` references it (schema v2).
+Per-entry beats and show-loop wiring remain open — [AF-H02](audit_findings.md#af-h02).
 
 ---
 

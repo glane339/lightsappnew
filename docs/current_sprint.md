@@ -20,9 +20,9 @@ flowchart LR
     WS1 --> WS8["WS-8<br/>Docs &<br/>onboarding"]
 ```
 
-WS-6 comes before every schema change deliberately: the storage layer's cascade and
-pruning logic is the code most likely to break under the WS-2 changes, and it is
-currently unverified ([AF-H05](audit_findings.md#af-h05)).
+WS-6 comes before schema changes deliberately: the storage layer's cascade and
+pruning logic is the code most likely to break under model changes. WS-6.1 is
+**done** ([AF-H05](audit_findings.md#af-h05) partially addressed).
 
 ---
 
@@ -39,24 +39,30 @@ currently unverified ([AF-H05](audit_findings.md#af-h05)).
 - **Status.** **Done** — this task.
 - **Files.** `docs/*`, [`README.md`](../README.md).
 
-### 1.2 Remove the dead config path
-- **Goal.** Delete the empty `backend/config/` directory.
-- **Why.** Two plausible import paths for "config", one of them a 0-byte file, is a
-  trap ([AF-M07](audit_findings.md#af-m07)).
+### 1.2 Reconcile the two config modules
+- **Goal.** Make the split intentional and documented (do **not** delete
+  `backend/config/`).
+- **Why.** [AF-M07](audit_findings.md#af-m07) assumed `backend/config/config.py`
+  was empty/dead. It now holds compile-time LEDfx defaults that seed
+  [`storage/config.py`](../backend/storage/config.py) `LedfxConfig`. Two modules
+  remain, with distinct roles.
 - **Dependencies.** None.
-- **Acceptance.** `backend/config/` is gone; nothing imports it (nothing does today).
-- **Status.** Not started — deliberately out of scope for the documentation task.
-- **Files.** `backend/config/config.py`.
+- **Acceptance.** Module docstrings state the split; docs no longer call
+  `backend/config/` dead.
+- **Status.** **Done.**
+- **Files.** [`backend/config/config.py`](../backend/config/config.py),
+  [`storage/config.py`](../backend/storage/config.py).
 
 ### 1.3 Clean up `requirements.txt`
-- **Goal.** Drop `typing==3.7.4.3` and the direct `typing_extensions` pin.
-- **Why.** `typing` is a Python 3.4–3.6 backport with no purpose on 3.12 and is not
-  imported from PyPI by any code here; `typing_extensions` is a pydantic transitive
-  dependency ([AF-L02](audit_findings.md#af-l02)).
+- **Goal.** Drop `typing==3.7.4.3` and the direct `typing_extensions` pin; keep
+  real direct deps (`httpx`, `platformdirs`, `pydantic`, `pytest`).
+- **Why.** `typing` is a Python 3.4–3.6 backport with no purpose on 3.12;
+  `typing_extensions` is a pydantic transitive dependency
+  ([AF-L02](audit_findings.md#af-l02)).
 - **Dependencies.** None.
 - **Acceptance.** A fresh venv installs from `requirements.txt` and all modules
   import successfully.
-- **Status.** Not started.
+- **Status.** **Done.**
 - **Files.** [`requirements.txt`](../requirements.txt).
 
 ### 1.4 Add logging
@@ -66,17 +72,23 @@ currently unverified ([AF-H05](audit_findings.md#af-h05)).
   ([AF-M08](audit_findings.md#af-m08)).
 - **Dependencies.** None.
 - **Acceptance.** Storage-layer events appear in `logs/`; no `print` anywhere.
-- **Status.** Not started.
-- **Files.** new `backend/logging_setup.py`; [`storage/`](../backend/storage/);
+- **Status.** **Done.**
+- **Files.** [`backend/logging_setup.py`](../backend/logging_setup.py);
+  [`storage/`](../backend/storage/);
   `logs/` path already exists at [`paths.py:21`](../backend/storage/paths.py#L21).
 
 ---
 
-## WS-2 · Scene and preset model
+## WS-2 · Scene and preset model — **PARKED**
 
-The schema changes. All are additive and migratable; all must go through
-`REFERENCES` in [`records.py`](../backend/storage/records.py)
-([D-015](decisions.md#d-015-the-reference-graph-stays-declarative)).
+> **Parked.** The Fixture / per-entry beat / WLED cue-list schema plan assumes a
+> shared beat-sequenced cue architecture that is under reconsideration. Do not
+> implement WS-2 until the show-control model is redesigned. Storage tests
+> (WS-6.1) remain valuable regardless.
+
+The schema changes below are historical sprint text. All would be additive and
+migratable through `REFERENCES` in [`records.py`](../backend/storage/records.py)
+([D-015](decisions.md#d-015-the-reference-graph-stays-declarative)) if revived.
 
 ### 2.1 Introduce the `Fixture` collection
 - **Goal.** A persisted fixture (id, name, universe, start_address, channel_count);
@@ -110,23 +122,18 @@ The schema changes. All are additive and migratable; all must go through
   `storage/records.py`; `storage/migrations.py`.
 
 ### 2.3 Make the WLED path modellable
-- **Goal.** Register `WLED_Preset_List` with the storage layer, add
-  `ledfx_preset_id` to `WLED_Preset`, change `Preset.wled_preset_id` →
-  `wled_preset_list_id`.
-- **Why.** [AF-H03](audit_findings.md#af-h03) — the list is unreachable, the preset
-  identifies nothing, and the `Preset` asymmetry makes WLED sequencing structurally
-  impossible.
-- **Dependencies.** 2.2 (same entry shape); ideally
-  [D-018](decisions.md#d-018-ledfx-preset-identifier-form) resolved first, though
-  an opaque string field is safe to add regardless.
+- **Goal.** Register `WLED_Preset_List` with the storage layer; change
+  `Preset.wled_preset_id` → `wled_preset_list_id`.
+- **Why.** [AF-H03](audit_findings.md#af-h03) — the list was unreachable and the
+  `Preset` shape was asymmetric with the DMX side.
+- **Dependencies.** None (landed independently of parked WS-2.1/2.2).
 - **Acceptance.** `WLED_Preset_List` appears in `RECORD_TYPES`, `COLLECTION_ORDER`,
   `MODEL_TYPES`, and `REFERENCES`; it round-trips; `Library.add()` accepts it;
-  a `Preset` resolves to a WLED cue list; integrity and cascade behave correctly for
-  the new relationship.
-- **Status.** Not started.
-- **Files.** `models/WLED_Preset.py`; `models/WLED_Preset_List.py`;
-  `models/Preset.py`; `storage/records.py`; `storage/library.py`;
-  `storage/migrations.py`.
+  a `Preset` resolves to a WLED cue list; schema v2 migration wraps legacy data.
+- **Status.** **Done.**
+- **Files.** `models/Preset.py`; `models/WLED_Preset_List.py`;
+  `storage/records.py`; `storage/library.py`; `storage/migrations.py`;
+  `tests/test_library.py`; `tests/test_migrations.py`.
 
 ### 2.4 Add field validation
 - **Goal.** Bound `channel_values` to 0–255, `channel_count` to 1–512,
@@ -142,7 +149,10 @@ The schema changes. All are additive and migratable; all must go through
 
 ---
 
-## WS-3 · Shared beat sequencing
+## WS-3 · Shared beat sequencing — **PARKED**
+
+> **Parked** with WS-2. A single shared `BeatSequencer` for DMX and WLED may be
+> the wrong control model; redesign before coding.
 
 ### 3.1 `BeatSequencer`
 - **Goal.** One class: entries, index, beats elapsed, loop mode; consumes beat
@@ -186,7 +196,11 @@ The schema changes. All are additive and migratable; all must go through
 
 ---
 
-## WS-4 · DMX state and E1.31 output
+## WS-4 · DMX state and E1.31 output — **PARKED**
+
+> **Parked** pending a verified transport story for the universe box and a
+> redesigned show-control model. Null/recording sender ideas may still apply
+> later; do not build sACN on the current assumptions.
 
 ### 4.1 Multi-universe active state with dirty tracking
 - **Goal.** Per-universe 512-value buffers, dirty flags, clamped writes, blackout.
@@ -245,14 +259,15 @@ The schema changes. All are additive and migratable; all must go through
   running LEDfx instance — which entity, what identifier form, is it stable across
   restarts.
 - **Why.** If identifiers are unstable, storing them produces config that silently
-  breaks. This determines the WS-2.3 field.
+  breaks.
 - **Dependencies.** LEDfx installed. It runs without physical WLED devices, so this
   risks nothing.
 - **Acceptance.** Answers recorded in
   [wled_ledfx_architecture.md](wled_ledfx_architecture.md#31-preset-identifiers) and
   D-018 moved to Accepted.
-- **Status.** Not started.
-- **Files.** docs only.
+- **Status.** **Done** (accepted: `WLED_Preset.id` = LEDfx scene name; slug resolved
+  in memory). Still needs live verification when hardware arrives.
+- **Files.** docs; [`backend/ledfx/`](../backend/ledfx/).
 
 ### 5.2 LEDfx client adapter
 - **Goal.** The only module that knows LEDfx exists: HTTP calls, explicit timeouts,
@@ -260,13 +275,13 @@ The schema changes. All are additive and migratable; all must go through
   variants; null is the default.
 - **Why.** [D-004](decisions.md#d-004-ledfx-owns-wled-output),
   [D-013](decisions.md#d-013-hardware-output-defaults-to-a-null-implementation).
-- **Dependencies.** 5.1, WS-2.3. Requires an HTTP client dependency.
-- **Acceptance.** N beats within one entry produce exactly one call; the dedup cache
-  is invalidated on unreachability and the current preset re-applied on recovery;
-  every call has an explicit timeout; LEDfx being down never stalls beat handling or
-  DMX; no call runs on the beat thread.
-- **Status.** Not started.
-- **Files.** new `backend/output/ledfx_client.py`;
+- **Dependencies.** 5.1. Requires an HTTP client dependency.
+- **Acceptance.** Client + null client exist; scene sync can upsert names into
+  `wled_presets`; nothing activates unless `ledfx.enabled` is true. Full
+  beat-thread isolation awaits a show loop (WS-3 parked).
+- **Status.** **Done for the adapter/sync slice** (`backend/ledfx/`). Not wired to
+  a Scene Controller. Live box test still pending.
+- **Files.** [`backend/ledfx/`](../backend/ledfx/);
   [`storage/config.py`](../backend/storage/config.py) (`WLEDConfig` → `LedfxConfig`).
 
 ---
@@ -286,8 +301,9 @@ The schema changes. All are additive and migratable; all must go through
   folder; round-trip, dangling-reference rejection, cascade delete (including the
   Scene-destroying single-reference path), orphan pruning, ILDA folder sync,
   corrupt-file quarantine, and migration version handling are all covered.
-- **Status.** Not started. **Should land with or before WS-2.1.**
-- **Files.** new `tests/`; `requirements.txt` (dev dependency).
+- **Status.** **Done.**
+- **Files.** [`tests/`](../tests/); [`pytest.ini`](../pytest.ini);
+  [`requirements.txt`](../requirements.txt).
 
 ### 6.2 Null and recording implementations everywhere
 - **Goal.** Null/recording variants for the DMX sender, LEDfx client, and audio
@@ -331,8 +347,9 @@ The schema changes. All are additive and migratable; all must go through
 - **Dependencies.** WS-6.1 for the test command.
 - **Acceptance.** A new contributor can install, import, and run tests from the docs
   alone.
-- **Status.** Partially done — captured in
-  [platform_support.md](platform_support.md); the test command awaits WS-6.1.
+- **Status.** **Done** — [`README.md`](../README.md) and
+  [platform_support.md](platform_support.md) document install, import root, data
+  folder override, and `pytest`.
 - **Files.** [`platform_support.md`](platform_support.md), [`README.md`](../README.md).
 
 ### 8.2 Keep decisions current
@@ -340,5 +357,5 @@ The schema changes. All are additive and migratable; all must go through
 - **Why.** Three open decisions block WS-3, WS-4, and WS-5 respectively.
 - **Dependencies.** The corresponding investigations.
 - **Acceptance.** No Open decision blocks an in-progress workstream.
-- **Status.** Ongoing.
+- **Status.** D-018 **Accepted**. D-016 and D-017 remain Open.
 - **Files.** [`decisions.md`](decisions.md).

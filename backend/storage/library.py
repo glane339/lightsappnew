@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Type
 
 from pydantic import BaseModel, ValidationError
+
+logger = logging.getLogger(__name__)
 
 from models.DMX_Device_Preset import DMX_Device_Preset
 from models.DMX_Preset import DMX_Preset
@@ -13,6 +16,7 @@ from models.ILDA_Frame_List import ILDA_Frame_List
 from models.Preset import Preset
 from models.Scene import Scene
 from models.WLED_Preset import WLED_Preset
+from models.WLED_Preset_List import WLED_Preset_List
 from storage.config import AppConfig, ensure_config, save_config
 from storage.ilda_blobs import (
     MissingFrameFileError,
@@ -36,6 +40,7 @@ from storage.records import (
     REFERENCES,
     ROOT_COLLECTIONS,
     SCENES,
+    WLED_PRESET_LISTS,
     WLED_PRESETS,
     DMXDevicePresetRecord,
     DMXPresetListRecord,
@@ -44,6 +49,7 @@ from storage.records import (
     ILDAFrameRecord,
     PresetRecord,
     SceneRecord,
+    WLEDPresetListRecord,
     WLEDPresetRecord,
 )
 
@@ -62,6 +68,7 @@ MODEL_TYPES: Dict[str, Type[BaseModel]] = {
     DMX_PRESET_LISTS: DMX_Preset_List,
     DMX_PRESETS: DMX_Preset,
     DMX_DEVICE_PRESETS: DMX_Device_Preset,
+    WLED_PRESET_LISTS: WLED_Preset_List,
     WLED_PRESETS: WLED_Preset,
     ILDA_FRAME_LISTS: ILDA_Frame_List,
     ILDA_FRAMES: ILDA_Frame,
@@ -97,6 +104,7 @@ class Library:
         self.dmx_preset_lists: Dict[str, DMX_Preset_List] = {}
         self.dmx_presets: Dict[str, DMX_Preset] = {}
         self.dmx_device_presets: Dict[str, DMX_Device_Preset] = {}
+        self.wled_preset_lists: Dict[str, WLED_Preset_List] = {}
         self.wled_presets: Dict[str, WLED_Preset] = {}
         self.ilda_frame_lists: Dict[str, ILDA_Frame_List] = {}
         self.ilda_frames: Dict[str, ILDA_Frame] = {}
@@ -108,6 +116,7 @@ class Library:
             DMX_PRESET_LISTS: self.dmx_preset_lists,
             DMX_PRESETS: self.dmx_presets,
             DMX_DEVICE_PRESETS: self.dmx_device_presets,
+            WLED_PRESET_LISTS: self.wled_preset_lists,
             WLED_PRESETS: self.wled_presets,
             ILDA_FRAME_LISTS: self.ilda_frame_lists,
             ILDA_FRAMES: self.ilda_frames,
@@ -147,7 +156,7 @@ class Library:
             return Preset(
                 id=record.id,
                 dmx_preset_list_id=record.dmx_preset_list_id,
-                wled_preset_id=record.wled_preset_id,
+                wled_preset_list_id=record.wled_preset_list_id,
             )
         if collection == DMX_PRESET_LISTS:
             return DMX_Preset_List(id=record.id, dmx_preset_ids=list(record.dmx_preset_ids))
@@ -161,6 +170,12 @@ class Library:
                 order=record.order,
                 channel_count=record.channel_count,
                 channel_values=list(record.channel_values),
+            )
+        if collection == WLED_PRESET_LISTS:
+            return WLED_Preset_List(
+                id=record.id,
+                wled_preset_ids=list(record.wled_preset_ids),
+                beats=record.beats,
             )
         if collection == WLED_PRESETS:
             return WLED_Preset(id=record.id)
@@ -228,7 +243,7 @@ class Library:
             return PresetRecord(
                 id=obj.id,
                 dmx_preset_list_id=obj.dmx_preset_list_id,
-                wled_preset_id=obj.wled_preset_id,
+                wled_preset_list_id=obj.wled_preset_list_id,
             )
         if collection == DMX_PRESET_LISTS:
             return DMXPresetListRecord(id=obj.id, dmx_preset_ids=list(obj.dmx_preset_ids))
@@ -242,6 +257,12 @@ class Library:
                 order=obj.order,
                 channel_count=obj.channel_count,
                 channel_values=list(obj.channel_values),
+            )
+        if collection == WLED_PRESET_LISTS:
+            return WLEDPresetListRecord(
+                id=obj.id,
+                wled_preset_ids=list(obj.wled_preset_ids),
+                beats=obj.beats,
             )
         if collection == WLED_PRESETS:
             return WLEDPresetRecord(id=obj.id)
@@ -330,6 +351,14 @@ class Library:
 
         deleted: List[Tuple[str, str]] = []
         self._delete_cascade(collection, obj_id, deleted, set())
+        if deleted:
+            logger.info(
+                "deleted %s '%s' (force=%s); removed %s",
+                collection,
+                obj_id,
+                force,
+                deleted,
+            )
         return deleted
 
     def _delete_cascade(
@@ -385,6 +414,8 @@ class Library:
                 self._maps[collection].pop(obj_id, None)
             if orphans:
                 removed[collection] = orphans
+        if removed:
+            logger.info("pruned orphans: %s", removed)
         return removed
 
     def _mark_reachable(self, collection: str, obj_id: str, reachable: Set[Tuple[str, str]]) -> None:
@@ -446,6 +477,8 @@ class Library:
             report["added"] = added
         if vanished:
             report["removed"] = vanished
+        if report:
+            logger.info("ilda folder sync: %s", report)
         if report and persist:
             self._write(ILDA_FRAMES)
             self._write(ILDA_FRAME_LISTS)

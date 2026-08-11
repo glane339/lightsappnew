@@ -35,8 +35,8 @@ in phase 2 modify the least-verified code in the repository.
 ## Phase 1 · Repository and architecture baseline
 
 **Scope.** Document the system as it exists, separate current from target, record
-decisions, and clear the trivial debris (empty `backend/config/`, the stale
-`requirements.txt` pins, missing logging).
+decisions, and reconcile the config split (`backend/config/` vs `storage/config/`),
+clean `requirements.txt`, and add logging.
 
 **Exit criteria.**
 - `docs/` explains the architecture, the gaps, and the plan; every referenced path
@@ -46,15 +46,15 @@ decisions, and clear the trivial debris (empty `backend/config/`, the stale
 - Open decisions are enumerated ([D-016](decisions.md#d-016-audio-event-delivery-mechanism)–[D-018](decisions.md#d-018-ledfx-preset-identifier-form)).
 - Logging exists and writes to the `logs/` directory that is already created.
 
-**Non-goals.** No refactor. No new dependencies. No behaviour change.
+**Non-goals.** No refactor beyond hygiene. No show loop.
 
 **Risks.** Documentation drifting from code — mitigated by citing file and line
 throughout, so drift is visible as a broken reference.
 
 **Dependencies.** None.
 
-**Status.** Documentation done. Cleanup items 1.2–1.4 in
-[current_sprint.md](current_sprint.md#ws-1--architecture-stabilization) outstanding.
+**Status.** **Done** — docs baseline, WS-1.2–1.4, WS-6.1, and partial WS-2.3
+(WLED list registration) landed on `main`.
 
 ---
 
@@ -79,15 +79,14 @@ tilt) stay deferred until raw values demonstrably hurt. No effects engine. No
 runtime code.
 
 **Risks.**
-- The migration is the first one ever written; the framework is untested. Mitigated
-  by phase 6 landing first and by the existing pre-migration snapshot
-  ([`migrations.py:66`](../backend/storage/migrations.py#L66)).
 - Four-place edits per field ([AF-M04](audit_findings.md#af-m04)) make a missed
-  converter update plausible, and it fails as silent data loss on save. Mitigated by
-  round-trip tests.
-- The LEDfx identifier form is unknown; an opaque string is the safe placeholder.
+  converter update plausible. Mitigated by storage round-trip tests.
+- Show-control model under review — WS-2 parked in [current_sprint.md](current_sprint.md).
 
-**Dependencies.** Phase 6 test harness.
+**Dependencies.** Phase 6 (testing) substantially complete; phase 1 done.
+
+**Status.** **Partially done** — WLED list registration and `Preset.wled_preset_list_id`
+landed (schema v2). Fixture model, per-entry beats, and validation remain **parked**.
 
 ---
 

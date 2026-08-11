@@ -9,6 +9,7 @@ PRESETS = "presets"
 DMX_PRESET_LISTS = "dmx_preset_lists"
 DMX_PRESETS = "dmx_presets"
 DMX_DEVICE_PRESETS = "dmx_device_presets"
+WLED_PRESET_LISTS = "wled_preset_lists"
 WLED_PRESETS = "wled_presets"
 ILDA_FRAME_LISTS = "ilda_frame_lists"
 ILDA_FRAMES = "ilda_frames"
@@ -24,7 +25,7 @@ class SceneRecord(BaseModel):
 class PresetRecord(BaseModel):
     id: str
     dmx_preset_list_id: str
-    wled_preset_id: str
+    wled_preset_list_id: str
 
 
 class DMXPresetListRecord(BaseModel):
@@ -42,6 +43,12 @@ class DMXDevicePresetRecord(BaseModel):
     order: int
     channel_count: int
     channel_values: List[int] = []
+
+
+class WLEDPresetListRecord(BaseModel):
+    id: str
+    wled_preset_ids: List[str] = []
+    beats: int = 0
 
 
 class WLEDPresetRecord(BaseModel):
@@ -65,6 +72,7 @@ RECORD_TYPES: Dict[str, Type[BaseModel]] = {
     DMX_PRESET_LISTS: DMXPresetListRecord,
     DMX_PRESETS: DMXPresetRecord,
     DMX_DEVICE_PRESETS: DMXDevicePresetRecord,
+    WLED_PRESET_LISTS: WLEDPresetListRecord,
     WLED_PRESETS: WLEDPresetRecord,
     ILDA_FRAME_LISTS: ILDAFrameListRecord,
     ILDA_FRAMES: ILDAFrameRecord,
@@ -73,6 +81,7 @@ RECORD_TYPES: Dict[str, Type[BaseModel]] = {
 # Leaves first: a collection only ever points at collections listed before it.
 COLLECTION_ORDER: Tuple[str, ...] = (
     WLED_PRESETS,
+    WLED_PRESET_LISTS,
     DMX_DEVICE_PRESETS,
     DMX_PRESETS,
     DMX_PRESET_LISTS,
@@ -95,9 +104,10 @@ REFERENCES: Dict[str, Tuple[Tuple[str, str, bool], ...]] = {
     ),
     PRESETS: (
         ("dmx_preset_list_id", DMX_PRESET_LISTS, False),
-        ("wled_preset_id", WLED_PRESETS, False),
+        ("wled_preset_list_id", WLED_PRESET_LISTS, False),
     ),
     DMX_PRESET_LISTS: (("dmx_preset_ids", DMX_PRESETS, True),),
     DMX_PRESETS: (("dmx_device_preset_ids", DMX_DEVICE_PRESETS, True),),
+    WLED_PRESET_LISTS: (("wled_preset_ids", WLED_PRESETS, True),),
     ILDA_FRAME_LISTS: (("ilda_frame_ids", ILDA_FRAMES, True),),
 }

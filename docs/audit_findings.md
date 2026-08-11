@@ -3,6 +3,13 @@
 Repository-grounded findings from a full read of all 21 Python source files, the
 README, AGENTS.md, and `requirements.txt` at commit `691062e`.
 
+> **Updates since audit (Aug 2026).** The following findings are partially or fully
+> addressed on current `main`: **AF-H03** (WLED list registered;
+> `Preset.wled_preset_list_id`; `WLED_Preset.id` = scene name), **AF-H05** (32-test
+> storage suite), **AF-M07** (config split documented), **AF-M08** (logging),
+> **AF-L02** (requirements cleaned). **AF-H02** (per-entry beats) and **AF-H01**
+> (fixtures) remain open. WS-2/3/4 are parked pending show-control redesign.
+
 Severity reflects impact **on this project at its current stage** — a pre-runtime
 repository with no deployment, no users, and no hardware output. Nothing here is
 rated Critical, because nothing in the repository can currently cause data loss,
@@ -13,19 +20,19 @@ three findings that actually matter.
 | --- | --- | --- | --- |
 | [AF-H01](#af-h01) | High | No fixture identity; DMX addresses derived positionally | **Yes** |
 | [AF-H02](#af-h02) | High | Beat duration is absent from the persisted model | **Yes** |
-| [AF-H03](#af-h03) | High | `WLED_Preset_List` unreachable; `WLED_Preset` carries no LEDfx id | **Yes** |
+| [AF-H03](#af-h03) | High | `WLED_Preset_List` unreachable; `WLED_Preset` carries no LEDfx id | ~~Yes~~ **Resolved** |
 | [AF-H04](#af-h04) | High | Force-delete cascade can silently destroy Scenes and user files | No |
-| [AF-H05](#af-h05) | High | No tests of any kind | **Yes** |
+| [AF-H05](#af-h05) | High | No tests of any kind | ~~Yes~~ **Resolved** (storage) |
 | [AF-M01](#af-m01) | Medium | DMX channel values are never range-checked or clamped | No |
 | [AF-M02](#af-m02) | Medium | `sensitivity` and other numeric fields are unbounded | No |
 | [AF-M03](#af-m03) | Medium | Runtime state is module-global with no concurrency story | No |
 | [AF-M04](#af-m04) | Medium | Model/record duplication requires four-place edits | No |
 | [AF-M05](#af-m05) | Medium | `Library.load()` writes to disk | No |
 | [AF-M06](#af-m06) | Medium | `DMXConfig.universe` defaults to 0, not a valid sACN universe | No |
-| [AF-M07](#af-m07) | Medium | `backend/config/config.py` is an empty file duplicating a real module | No |
-| [AF-M08](#af-m08) | Medium | No logging anywhere in the codebase | No |
+| [AF-M07](#af-m07) | Medium | `backend/config/config.py` is an empty file duplicating a real module | ~~No~~ **Resolved** |
+| [AF-M08](#af-m08) | Medium | No logging anywhere in the codebase | ~~No~~ **Resolved** |
 | [AF-L01](#af-l01) | Low | `refresh_hz` default of 120 exceeds DMX512 physical capability | No |
-| [AF-L02](#af-l02) | Low | `requirements.txt` pins a deprecated backport and transitive deps | No |
+| [AF-L02](#af-l02) | Low | `requirements.txt` pins a deprecated backport and transitive deps | ~~No~~ **Resolved** |
 | [AF-L03](#af-l03) | Low | Session state (`ui.last_scene_id`) stored in the config file | No |
 | [AF-L04](#af-l04) | Low | `stored_version` silently coerces a non-integer version | No |
 | [AF-L05](#af-l05) | Low | `import_ild` bypasses `Library.add()` | No |
@@ -87,9 +94,14 @@ diverge. Validate `beats >= 1` at load.
 ---
 
 ### AF-H03
-**`WLED_Preset_List` is unreachable and `WLED_Preset` carries no LEDfx identifier.**
+**`WLED_Preset_List` was unreachable; `WLED_Preset` carried no LEDfx identifier.**
 
-*Evidence.* Verified by search — `WLED_Preset_List` appears only in its own file:
+> **Update (Aug 2026): Resolved.** `WLED_Preset_List` is registered (`wled_preset_lists`
+> collection, schema v2). `Preset.wled_preset_list_id` references it.
+> `WLED_Preset.id` is the LEDfx scene name ([D-018](decisions.md#d-018-ledfx-preset-identifier-form)).
+> Per-entry beats ([AF-H02](audit_findings.md#af-h02)) and show-loop wiring remain open.
+
+*Evidence (at audit time).* Verified by search — `WLED_Preset_List` appeared only in its own file:
 
 ```
 $ grep -rn "WLED_Preset_List\|wled_preset_list" --include=*.py .
@@ -147,6 +159,9 @@ single-reference cascade rule prominently on `delete()`.
 
 ### AF-H05
 **No tests of any kind.**
+
+> **Update (Aug 2026): Resolved for storage.** [`tests/`](../tests/) — 32 pytest
+> cases; [`pytest.ini`](../pytest.ini); temp data roots. Runtime/output still untested.
 
 *Evidence.* No test files, no `tests/` directory, no pytest configuration, no test
 runner in [`requirements.txt`](../requirements.txt), no CI workflow.
@@ -287,9 +302,13 @@ box first**, since nothing in the repository documents what it expects. See
 ---
 
 ### AF-M07
-**`backend/config/config.py` is an empty file duplicating a real module.**
+**`backend/config/config.py` duplicated a real config module.**
 
-*Evidence.* The file is tracked, is 0 bytes, and the actual configuration module is
+> **Update (Aug 2026): Resolved.** `backend/config/config.py` holds compile-time
+> LEDfx defaults; `storage/config.py` holds persisted `AppConfig`. Documented in
+> module docstrings and [platform_support.md](platform_support.md#import-root).
+
+*Evidence (at audit time).* The file was tracked, was 0 bytes, and the actual configuration module is
 [`backend/storage/config.py`](../backend/storage/config.py). There is no
 `backend/config/__init__.py`, so `backend/config/` is a stray directory.
 
@@ -304,7 +323,11 @@ is a trap for the next contributor.
 ### AF-M08
 **No logging anywhere in the codebase.**
 
-*Evidence.* Zero matches for `logging`, `logger`, or `print` across all source
+> **Update (Aug 2026): Resolved.** [`backend/logging_setup.py`](../backend/logging_setup.py);
+> storage layer uses `logging` for quarantine, cascade delete, orphan prune, ILDA sync,
+> and migrations. Call `configure_logging()` from a future entry point.
+
+*Evidence (at audit time).* Zero matches for `logging`, `logger`, or `print` across all source
 files. Note that [`paths.py:21`](../backend/storage/paths.py#L21) already creates a
 `logs/` directory that nothing ever writes to.
 
@@ -331,7 +354,10 @@ Recommend 30–44 Hz, verified against the box. Harmless until a sender exists.
 ### AF-L02
 **`requirements.txt` pins a deprecated backport and transitive dependencies.**
 
-[`requirements.txt`](../requirements.txt) lists `typing==3.7.4.3` — the PyPI backport
+> **Update (Aug 2026): Resolved.** Direct deps are now `httpx`, `platformdirs`,
+> `pydantic`, `pytest`. Stale `typing` / `typing_extensions` pins removed.
+
+[`requirements.txt`](../requirements.txt) listed `typing==3.7.4.3` — the PyPI backport
 of the standard library `typing` module, intended for Python 3.4–3.6 and with no
 purpose on 3.12. The code imports stdlib `typing` throughout; the package is
 unnecessary and installing it into site-packages is a known source of confusion.

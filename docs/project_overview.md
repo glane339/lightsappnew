@@ -26,28 +26,30 @@ remote-access requirement in the repository today.
 
 ## Current maturity
 
-> **The repository is a data-model and persistence layer. It is not yet a running
-> application.**
+> **The repository is a persistence layer with an unwired LEDfx adapter. It is not
+> yet a running show application.**
 
-There is no entry point, no server, no UI, no audio input, no network output, and
-no tests. Nothing in the repository opens a socket, reads a microphone, or talks
-to hardware.
+There is no entry point, no server, and no UI. Audio input and DMX network output
+are absent. A pytest storage suite and an optional LEDfx HTTP client exist; nothing
+is wired into a show loop.
 
 | Layer | Status | Evidence |
 | --- | --- | --- |
-| Persistence / storage | **Substantially implemented** | [`backend/storage/`](../backend/storage/) — 8 modules |
-| Data model | **Partially implemented, inconsistent with intent** | [`backend/models/`](../backend/models/) — 11 models |
+| Persistence / storage | **Substantially implemented** | [`backend/storage/`](../backend/storage/) — schema v2, migrations, integrity |
+| Data model | **Partially implemented** | 11 models; `WLED_Preset_List` registered; per-entry beats still absent |
 | Runtime state | **Prototype seed (82 lines)** | [`backend/runtime/active.py`](../backend/runtime/active.py) |
 | Scene controller | **Absent** | no equivalent module |
-| Audio / BPM / beat detection | **Absent (configuration placeholders only)** | `AudioConfig` and `Scene.sensitivity` persist settings; no signal processing or runtime reader exists |
-| DMX transport (E1.31/sACN) | **Absent** | no match for `sacn`, `e131`, `socket`, `udp`; no such dependency |
-| WLED / LEDfx integration | **Absent (placeholder models/config only)** | `WLEDConfig` and WLED models exist; no LEDfx client, HTTP call, or networking dependency exists |
-| ILDA processing | **Storage only** | [`backend/storage/ilda_blobs.py`](../backend/storage/ilda_blobs.py) stores `.ild` files; nothing parses or plays them |
-| UI / frontend | **Absent** | no `frontend/` directory exists; the README marks it as planned |
-| Tests | **Absent** | no test files, no test runner configured |
+| Audio / BPM / beat detection | **Absent (configuration placeholders only)** | `AudioConfig` and `Scene.sensitivity` persist settings; no signal processing |
+| DMX transport (E1.31/sACN) | **Absent** | no sACN/E1.31 sender |
+| WLED / LEDfx integration | **Client exists, unwired** | [`backend/ledfx/`](../backend/ledfx/); `LedfxConfig.enabled` defaults false |
+| ILDA processing | **Storage only** | [`.ild` blob store](../backend/storage/ilda_blobs.py); nothing parses or plays |
+| UI / frontend | **Absent** | no `frontend/` directory |
+| Tests | **Storage suite (32 tests)** | [`tests/`](../tests/), `pytest.ini` |
 | CI | **Absent** | no workflow files |
+| Logging | **Implemented** | [`backend/logging_setup.py`](../backend/logging_setup.py); storage events log to `logs/` |
 
-Roughly 1,240 lines of Python in 21 files, of which ~1,080 are the storage layer.
+Roughly 1,500+ lines of Python across backend and tests; the storage layer remains
+the largest single subsystem.
 
 ---
 
@@ -59,8 +61,10 @@ three intended output domains:
 1. **DMX512 over E1.31/sACN** — data modelled ([`DMX_Preset`](../backend/models/DMX_Preset.py),
    [`DMX_Device_Preset`](../backend/models/DMX_Device_Preset.py),
    [`Active_DMX_Channels`](../backend/models/Active_DMX_Channels.py)); transport absent.
-2. **WLED via LEDfx** — placeholder models only
-   ([`WLED_Preset`](../backend/models/WLED_Preset.py) has no fields beyond `id`).
+2. **WLED via LEDfx** — [`WLED_Preset`](../backend/models/WLED_Preset.py) stores the
+   LEDfx scene name as `id`; [`WLED_Preset_List`](../backend/models/WLED_Preset_List.py)
+   is persisted and referenced from [`Preset`](../backend/models/Preset.py). HTTP
+   client in [`backend/ledfx/`](../backend/ledfx/); not wired to a show loop.
 3. **ILDA laser** — file storage and reference-tracking only; no processing, and
    **no output path exists or should be enabled**. See
    [laser_and_haze_safety.md](laser_and_haze_safety.md).
@@ -73,13 +77,14 @@ What the code actually does today:
 
 - Opens a per-user data folder (`%LOCALAPPDATA%\LightsApp` on Windows) and creates
   the `data/`, `ilda/`, `backups/`, `logs/` layout — [`storage/paths.py`](../backend/storage/paths.py).
-- Loads and saves eight normalized JSON collections, one file per model class,
+- Loads and saves nine normalized JSON collections, one file per model class,
   with crash-safe atomic writes and corrupt-file quarantine —
   [`storage/json_store.py`](../backend/storage/json_store.py).
 - Enforces referential integrity across the object graph on load, on save, and on
   insert; supports cascade delete, orphan pruning, and referrer lookup —
   [`storage/library.py`](../backend/storage/library.py).
-- Versions the data folder and snapshots before migrating —
+- Versions the data folder (schema **v2**), snapshots before migrating, and
+  wraps legacy `Preset.wled_preset_id` values into one-entry WLED lists —
   [`storage/migrations.py`](../backend/storage/migrations.py).
 - Exports/imports the whole data folder as a zip, with zip-slip protection —
   [`storage/archive.py`](../backend/storage/archive.py).
@@ -87,6 +92,9 @@ What the code actually does today:
   database on load — [`storage/ilda_blobs.py`](../backend/storage/ilda_blobs.py).
 - Resolves a scene to a flat 512-value DMX channel buffer in memory —
   [`runtime/active.py`](../backend/runtime/active.py).
+- Polls LEDfx for scene names and upserts `WLED_Preset` rows when enabled —
+  [`ledfx/scene_sync.py`](../backend/ledfx/scene_sync.py).
+- Runs a pytest storage suite against temp data roots — [`tests/`](../tests/).
 
 ## Major incomplete areas
 
@@ -98,11 +106,12 @@ Ranked by how much they block a working system:
    identity, universe, start address, or channel profile anywhere. See
    [fixture_and_transport_strategy.md](fixture_and_transport_strategy.md).
 2. **Beat-driven sequencing is not represented.** `DMX_Preset_List` has no beat
-   field at all; `WLED_Preset_List` has a single scalar `beats` and is *not
-   registered with the storage layer*, so it is unreachable code.
+   field; `WLED_Preset_List.beats` is a single scalar on the whole list, not per
+   entry. No sequencer or show loop consumes either.
 3. **No audio processor**, so `Scene.sensitivity` is persisted but never read.
-4. **No output transport** of any kind for DMX or WLED.
-5. **No tests**, so none of the above can be changed safely.
+4. **No DMX output transport.** LEDfx HTTP exists but is not wired to cue changes.
+5. **Show-control architecture under review.** WS-2/3/4 in
+   [current_sprint.md](current_sprint.md) are parked pending a redesigned model.
 
 ## System boundaries
 
@@ -134,8 +143,8 @@ names the concrete repository type.
 | **Device state** | One device's channel values inside a look | [`DMX_Device_Preset`](../backend/models/DMX_Device_Preset.py) |
 | **Fixture** | Definition of a physical device (address, profile) | *does not exist* |
 | **Universe buffer** | The live 512 channel values sent to the wire | [`Active_DMX_Channels`](../backend/models/Active_DMX_Channels.py) |
-| **WLED cue list** | Ordered, beat-advanced sequence of LEDfx presets | [`WLED_Preset_List`](../backend/models/WLED_Preset_List.py) *(unreachable)* |
-| **LEDfx preset** | An effect configuration owned by LEDfx | [`WLED_Preset`](../backend/models/WLED_Preset.py) *(empty)* |
+| **WLED cue list** | Ordered sequence of LEDfx presets | [`WLED_Preset_List`](../backend/models/WLED_Preset_List.py) |
+| **LEDfx preset** | An effect configuration owned by LEDfx | [`WLED_Preset`](../backend/models/WLED_Preset.py) — `id` is the scene name |
 | **Transport** | E1.31/sACN packet emission over Ethernet | *does not exist* |
 
 Note the deliberate distinction between a **look** (a static state) and a **cue
@@ -166,9 +175,11 @@ the index, and nothing transmits the result.
 ```mermaid
 flowchart LR
     subgraph now["Implemented today"]
-        S1["JSON collections<br/>storage/"]
+        S1["JSON collections<br/>storage/ (schema v2)"]
         S2["Library object graph<br/>+ integrity checks"]
         S3["Active_DMX_Channels<br/>512-value buffer"]
+        S4["LEDfx client + sync<br/>backend/ledfx/"]
+        S5["pytest storage suite<br/>tests/"]
         S1 --> S2 --> S3
     end
     subgraph gap["Not implemented"]
@@ -177,11 +188,12 @@ flowchart LR
         G3["Beat Sequencer"]
         G4["Fixture / address model"]
         G5["E1.31 Sender"]
-        G6["LEDfx Client"]
+        G6["Show loop wiring<br/>LEDfx activation"]
         G7["ILDA Processor"]
         G8["Operator UI"]
     end
     S3 -.->|"missing link"| G5
+    S4 -.-> G6
     G2 -.-> G3 -.-> S3
 ```
 

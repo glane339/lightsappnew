@@ -33,15 +33,20 @@ implemented.
 ```text
 backend/
 ├── config/
-│   └── config.py            EMPTY FILE — dead path, see audit AF-M07
+│   └── config.py            Compile-time defaults; seeds LedfxConfig in AppConfig
+├── ledfx/
+│   ├── client.py            HTTP adapter + NullLedFxClient
+│   ├── scene_sync.py        Polls LEDfx; upserts WLED_Preset names
+│   └── service.py           build_ledfx_stack factory
+├── logging_setup.py         File + stderr logging into data-folder logs/
 ├── models/                  Runtime pydantic models (11 files)
 │   ├── Scene.py
-│   ├── Preset.py
+│   ├── Preset.py            wled_preset_list_id → WLED_Preset_List
 │   ├── DMX_Preset_List.py
 │   ├── DMX_Preset.py
 │   ├── DMX_Device_Preset.py
-│   ├── WLED_Preset.py
-│   ├── WLED_Preset_List.py  UNREACHABLE — not registered in storage, see AF-H03
+│   ├── WLED_Preset.py       id = LEDfx scene name
+│   ├── WLED_Preset_List.py  registered in storage (schema v2)
 │   ├── ILDA_Frame_List.py
 │   ├── ILDA_Frame.py
 │   ├── Active_DMX_Channels.py
@@ -51,33 +56,40 @@ backend/
 └── storage/
     ├── paths.py             Data-folder layout, platformdirs
     ├── json_store.py        Atomic write, corrupt-file quarantine
-    ├── records.py           On-disk schemas + the reference graph
+    ├── records.py           On-disk schemas + the reference graph (9 collections)
     ├── library.py           In-memory object graph, CRUD, integrity, cascade
-    ├── migrations.py        Schema versioning + pre-migration snapshot
+    ├── migrations.py        Schema v2; v1→v2 wraps wled_preset_id in lists
     ├── ilda_blobs.py        .ild file storage, id validation
-    ├── config.py            AppConfig (dmx/wled/ilda/audio/ui sections)
+    ├── config.py            AppConfig (dmx/ledfx/ilda/audio/ui)
     └── archive.py           Zip export/import with traversal guards
+
+tests/                       pytest storage suite (temp data root)
+pytest.ini                   pythonpath = backend
 ```
 
 There is no `__init__.py` anywhere. Imports are absolute from the `backend/`
-directory (`from models.Scene import Scene`), so `backend/` must be the import
-root. This is undocumented — see [platform_support.md](platform_support.md#import-root).
+directory (`from models.Scene import Scene`). `pytest.ini` sets `pythonpath = backend`
+for tests; see [platform_support.md](platform_support.md#import-root).
 
 ### 2.2 Current module dependency graph
 
 ```mermaid
 flowchart TD
     active["runtime/active.py"]
+    ledfx["ledfx/*.py"]
     library["storage/library.py"]
     records["storage/records.py"]
     jsonstore["storage/json_store.py"]
     paths["storage/paths.py"]
     migrations["storage/migrations.py"]
     cfg["storage/config.py"]
+    devcfg["config/config.py"]
     blobs["storage/ilda_blobs.py"]
     archive["storage/archive.py"]
     models["models/*.py"]
 
+    ledfx --> library
+    ledfx --> models
     active --> library
     active --> models
     active --> records
@@ -95,6 +107,7 @@ flowchart TD
     cfg --> jsonstore
     cfg --> migrations
     cfg --> paths
+    cfg --> devcfg
     blobs --> jsonstore
     blobs --> paths
     jsonstore --> paths
@@ -118,7 +131,7 @@ classDiagram
     class Preset {
         +str id
         +str dmx_preset_list_id
-        +str wled_preset_id
+        +str wled_preset_list_id
     }
     class DMX_Preset_List {
         +str id
@@ -134,6 +147,11 @@ classDiagram
         +int channel_count
         +List~int~ channel_values
     }
+    class WLED_Preset_List {
+        +str id
+        +List~str~ wled_preset_ids
+        +int beats
+    }
     class WLED_Preset {
         +str id
     }
@@ -148,31 +166,25 @@ classDiagram
     Scene --> Preset : preset_id
     Scene --> ILDA_Frame_List : ilda_frame_list_id
     Preset --> DMX_Preset_List : dmx_preset_list_id
-    Preset --> WLED_Preset : wled_preset_id
+    Preset --> WLED_Preset_List : wled_preset_list_id
     DMX_Preset_List --> DMX_Preset : dmx_preset_ids[]
     DMX_Preset --> DMX_Device_Preset : dmx_device_preset_ids[]
+    WLED_Preset_List --> WLED_Preset : wled_preset_ids[]
     ILDA_Frame_List --> ILDA_Frame : ilda_frame_ids[]
 ```
 
 This graph is declared once, canonically, in
-[`storage/records.py:91-103`](../backend/storage/records.py#L91-L103) as the
-`REFERENCES` table and is what drives integrity checks, cascade delete, orphan
-pruning and referrer lookup. Encoding the schema as data rather than as traversal
-code is the strongest design decision in the repository.
+[`storage/records.py`](../backend/storage/records.py) as the `REFERENCES` table and
+is what drives integrity checks, cascade delete, orphan pruning and referrer lookup.
+Encoding the schema as data rather than as traversal code is the strongest design
+decision in the repository.
 
-Three structural problems are visible in the diagram itself:
+Remaining structural gaps:
 
-- **`Preset` is asymmetric.** DMX goes through a *list* (sequenceable); WLED points
-  at a single `WLED_Preset` (not sequenceable). The intended design has both sides
-  reference a cue list.
-- **`WLED_Preset` carries no LEDfx identifier**, so it cannot name anything in
-  LEDfx. `WLED_Preset_List` — which would hold the sequence — is defined at
-  [`models/WLED_Preset_List.py`](../backend/models/WLED_Preset_List.py) but appears
-  in `RECORD_TYPES`, `COLLECTION_ORDER`, `REFERENCES`, and `MODEL_TYPES` **zero
-  times**. It cannot be loaded, saved, or referenced.
-- **Beat duration is unrepresented.** No entry in any cue list carries a beat
-  count. `WLED_Preset_List.beats` is a single scalar on the whole list, not per
-  entry.
+- **Beat duration is unrepresented.** No entry in either cue list carries a per-entry
+  beat count. `WLED_Preset_List.beats` is a single scalar on the whole list.
+- **No fixture identity.** DMX addresses are still derived positionally in
+  [`runtime/active.py`](../backend/runtime/active.py).
 
 ### 2.4 Current DMX address derivation
 
@@ -474,13 +486,13 @@ Full detail with severities in [audit_findings.md](audit_findings.md). Summary:
 | # | Debt | Impact |
 | --- | --- | --- |
 | 1 | No fixture/device identity; addresses derived positionally | Blocks correct multi-look rigs and any second universe |
-| 2 | Beat duration absent from the persisted model | Blocks the core sequencing feature |
-| 3 | `WLED_Preset_List` unreachable; `WLED_Preset` empty | WLED path cannot be built on the current model |
-| 4 | Model/record duplication with two hand-written 30-line converters | Every field change requires four edits ([`library.py:138-171`](../backend/storage/library.py#L138-L171) and [`library.py:219-252`](../backend/storage/library.py#L219-L252)) |
+| 2 | Beat duration absent from cue-list entries | Blocks beat-driven sequencing |
+| 3 | Show loop absent; LEDfx client unwired | No automatic preset activation |
+| 4 | Model/record duplication with hand-written converters | Every field change requires multiple edits |
 | 5 | Module-global runtime state, no concurrency story | Will race once audio and sender threads exist |
 | 6 | No value-range validation on DMX or sensitivity fields | Out-of-range values reach the wire unclamped |
-| 7 | Zero tests | Nothing above can be changed safely |
-| 8 | No logging anywhere in the codebase | Failures will be invisible during a show |
+| 7 | Storage tests only; no runtime/output coverage | Show loop changes still unverified |
+| 8 | Logging exists but no app entry point calls `configure_logging()` yet | Failures visible once a process starts |
 
 Item 4 deserves nuance: separating the on-disk schema (`records.py`) from the
 runtime model (`models/`) is a *legitimate and deliberate* choice — it lets the
