@@ -40,37 +40,41 @@ which is required for the replace to work across all platforms.
 | --- | --- |
 | **Documented requirement** | Python 3.12+ ([`README.md`](../README.md)) |
 | **Actual minimum from the code** | 3.9 or later — `from __future__ import annotations` plus `typing.Dict`/`List` (not PEP 585 builtins) throughout, and `Path.unlink(missing_ok=True)` at [`json_store.py:45`](../backend/storage/json_store.py#L45) requires 3.8+ |
-| **Observed locally** | `python --version` → `Python 3.11.9`; `py -3.12 --version` → *"No suitable Python runtime found"* |
+| **Observed locally (2026-08-13)** | `.venv/` at the repository root with **Python 3.12.10**; the full suite runs from it |
 
 Nothing requires 3.12 specifically. The version in the README is a preference, not a
-constraint, and the documented runtime is not present on the machine inspected.
-Tracked as [AF-D03](audit_findings.md#af-d03).
+constraint. (An earlier pass observed 3.11.9 with no venv — that machine state is
+historical; superseded per [AF2-L03](audit_findings.md#af2-l03).)
 
 ### Virtual environment
 
-[`README.md`](../README.md) and [`AGENTS.md`](../AGENTS.md) both assume a venv at the
-repository root:
+The working environment lives at **`.venv/`** at the repository root (both
+`venv/` and `.venv/` are gitignored, [`.gitignore`](../.gitignore)):
 
 ```powershell
-py -3.12 -m venv venv
-.\venv\Scripts\Activate.ps1
+py -3.12 -m venv .venv
+.\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 ```
 
-`venv/` is gitignored ([`.gitignore`](../.gitignore)) and **does not currently
-exist** in the working tree.
+[`AGENTS.md`](../AGENTS.md) and some older docstrings still say `venv/`
+([AF2-L03](audit_findings.md#af2-l03), partly corrected).
 
 ### Dependencies
 
 ```
+fastapi==0.141.1
 httpx==0.28.1
 platformdirs==4.11.0
 pydantic==2.13.4
 pytest==9.1.1
+uvicorn[standard]==0.52.1
 ```
 
-Direct imports: `httpx` (LEDfx client), `platformdirs`, `pydantic`. `pytest` for
-the storage suite. An sACN library and audio capture library are still absent.
+Direct imports: `httpx` (LEDfx client), `platformdirs`, `pydantic`, `fastapi` /
+`uvicorn` (operator server), `pytest` for the suite. An sACN library and audio
+capture library are still absent (WS-4.4 plans hand-rolled E1.31 framing rather
+than a dependency — [D-020](decisions.md#d-020-hand-rolled-e131-framing)).
 See [AF-L02](audit_findings.md#af-l02) — resolved for stale `typing` pins.
 
 ---
@@ -208,7 +212,7 @@ the box is still pending.
 From the repository root:
 
 ```powershell
-.\venv\Scripts\python.exe -m pytest
+.\.venv\Scripts\python.exe -m pytest
 ```
 
 [`pytest.ini`](../pytest.ini) sets `pythonpath = backend` and `testpaths = tests`.
@@ -275,10 +279,11 @@ Things a new contributor cannot learn from the repository without reading the so
 
 1. `backend/` must be on `sys.path`; there is no `__init__.py` and no packaging.
    `pytest.ini` handles this for tests.
-2. There is no entry point. Nothing is runnable as an app. The code is a library.
+2. The app entry point is `python backend/main.py` (operator server on
+   `0.0.0.0:8800`); the rest of the code is importable as a library.
 3. Application data lives outside the repository, in a platform-specific folder.
 4. `LIGHTSAPP_DATA_DIR` overrides that folder — use temp roots in tests.
 5. Constructing a `Library` has filesystem side effects, including writes.
-6. `venv/` is expected at the repository root but is gitignored.
+6. The virtual environment lives at `.venv/` at the repository root (gitignored).
 7. Python 3.12 is documented; 3.9+ is what the code actually needs.
 8. Run tests with `python -m pytest` from the repo root (see README).

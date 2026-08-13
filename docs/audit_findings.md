@@ -1,4 +1,423 @@
-# Lights App Repository Audit — v2
+# Lights App Repository Audits
+
+This document holds the **current audit (v3, operator server / runtime)** followed
+by the preserved **Audit v2** as the historical baseline. v1 findings keep `AF-*`
+ids, v2 findings carry `AF2-*` ids, and v3 server/runtime findings carry `F-*` ids.
+Where v3 confirms, narrows, or supersedes an earlier finding, that is recorded in
+[§ Reconciliation with Audit v2](#reconciliation-with-audit-v2-at-acc52a7) rather
+than by duplicating the finding.
+
+---
+
+# Audit v3 — Operator Server / Runtime
+
+**Audit commit:** `acc52a76ab8e0a9342d89517594bd321396bb319` ("server stopping mechanism")
+**Audit branch:** `docs/fable-server-runtime-audit` (content identical to `main` plus this documentation pass)
+**Audit date:** 2026-08-13
+**Auditor:** Claude (Fable 5)
+**Scope:** the server/runtime expansion landed in `122c0bd`…`acc52a7` — `backend/main.py`, `backend/server/` (app factory, `ShowEngine`, command types, WebSocket handler, REST routes, latency tracker, process tuning), `backend/runtime/` (active state, outputs, symbolic sender, scene controller, sequencer), `backend/ledfx/`, `backend/audio/`, `logging_setup.py`, `frontend/index.html`, `stop-server.ps1`/`.cmd`, `.devdata/`, the full test suite, and the architecture docs. All read in full; nothing sampled.
+
+## Deterministic validation
+
+```text
+git diff --check                     → clean
+.venv\Scripts\python.exe -m pytest   → 116 passed, 0 failed, 0 skipped, 0 xfail,
+                                       1 warning, ~23 s
+```
+
+The one warning is a `StarletteDeprecationWarning` raised from inside the
+installed fastapi package, not from project code. The documented 116-test count
+is accurate. There is no CI, lint, or type-check configuration to run.
+
+## Verdict
+
+**READY WITH MINOR FIXES.**
+
+**No server/runtime blocker was identified for *beginning* E1.31 implementation.**
+That is a narrower statement than E1.31 or hardware *readiness*: beginning the
+work means the `DmxTransport` seam is sound and the surrounding architecture will
+not need repair mid-milestone. Claiming E1.31 readiness additionally requires the
+recommended fixes below ([F-01](#f-01), [F-02](#f-02), [F-04](#f-04),
+[F-05](#f-05)) plus universe-box verification; claiming *hardware* readiness
+requires physical validation, which nothing in this repository provides. Nothing
+here is HARDWARE-PROVEN.
+
+The architecture is fundamentally sound: one thread owns `SceneController`
+outright, all control flows through a single bounded command queue, the sender
+sits behind a clean transport protocol, and DMX frames are built to the side and
+swapped in by atomic reference assignment — no execution path was found that
+corrupts show output. The defects concentrate in the ack/latency ledger, in
+resilience seams that only matter once a real socket can raise, and in shutdown
+semantics that only matter once packets leave the machine.
+
+## Findings summary
+
+Severities use the same calibration as v2 — impact on this project at its
+current stage. Nothing is Critical. Timing: **before E1.31** = fix before the
+transport milestone's acceptance is claimed; **during E1.31** = fold into WS-4.4;
+**later** = schedule against the named milestone.
+
+| ID | Severity | Area | Finding | Timing |
+| --- | --- | --- | --- | --- |
+| [F-01](#f-01) | High | Ack/latency ledger | `_awaiting_send` can pair an ack with the wrong command under a command burst | Before E1.31 |
+| [F-02](#f-02) | Medium | Sender resilience | No exception guard in `SenderThread._run`; a raising transport kills the thread silently | Before/during E1.31 |
+| [F-03](#f-03) | Medium | Runtime state | Module-global `active_dmx_channels` / `dmx_dirty` / publish counter shared across engine instances | Before WS-9 (real beat thread) |
+| [F-04](#f-04) | Medium | Stop script | `stop-server.ps1` force-kills past graceful shutdown; fallback matches any `backend/main.py` process | Before E1.31 hardware output |
+| [F-05](#f-05) | Medium | Shutdown | Blackout-on-clean-shutdown (D-011, Accepted) still unimplemented; shutdown ordering can drop a racing blackout command | During E1.31 |
+| [F-06](#f-06) | Medium | Concurrency / persistence | Scene-sync thread mutates and saves the `Library` cross-thread (refines [AF2-H01](#af2-h01)) | Later (with WS-10) |
+| [F-07](#f-07) | Low | Sender wake path | Keepalive-timeout window can swallow a `dmx_dirty` set, stranding ledger entries (frame content still correct) | During E1.31 |
+| [F-08](#f-08) | Low | WebSocket | Shared event queue splits state/ack events arbitrarily across multiple operator sockets | Later |
+| [F-09](#f-09) | Low | Shutdown | Queued commands dropped without error acks at stop; `submit()` accepted after stop | Later |
+| [F-10](#f-10) | Low | Diagnostics | `/api/diag/selftest` clears the live latency ring and would drive 1000 real activations against a future real transport | During E1.31 |
+| [F-11](#f-11) | Low | Repo hygiene | `.devdata/` commits a runtime log; `.devdata/logs/` not ignored | Anytime |
+| [F-12](#f-12) | Low | Docs / UI wording | Latency wording overstates the measured span at both ends in two places | Anytime |
+| [F-13](#f-13) | Info | Tuning | `gc.freeze()` runs before the app is built, so its comment overstates the effect | — |
+| [F-14](#f-14) | Info | LEDfx resilience | Shared `LedFxClient` races are benign; a non-`LedFxError` exception would kill the WLED worker (narrows [AF2-M04](#af2-m04)) | — |
+| [F-15](#f-15) | Info | DMX cadence | `refresh_hz: 120` keepalive exceeds the ~44 Hz physical DMX line rate (confirms [AF-L01](#af-l01), now live as the sender cadence) | Resolve at box verification |
+
+## Findings
+
+### F-01
+**Severity:** High · **Area:** Ack/latency ledger · **Timing:** before E1.31
+
+`ShowEngine._handle` ([engine.py:225-253](../backend/server/engine.py#L225-L253))
+enqueues `(received_ns, ack_id)` into `_awaiting_send` *before* dispatch;
+`_discard_pending` (the no-frame path) does a positional `get_nowait()` and
+ignores what it popped, then acks using the current command's fields.
+**Failure path:** command A (activate — publishes) and command B (beat landing
+mid-cue — publishes nothing) are both queued; the show thread, at above-normal
+priority with a 1 ms switch interval, processes both before the sender wakes.
+B's discard pops **A's** entry and acks B; the sender then drains **B's** entry
+and acks B a second time, timed against B's timestamp. Net: A never acked, B
+acked twice, the latency sample for the real frame charged to the wrong command.
+Breaks the engine's own "one ack or one error per command" invariant and
+corrupts the ledger that will be used to prove the p99 budget once
+`E131Transport` lands. **Fix:** make the discard identity-aware (match on
+`ack_id`, or decide "no frame expected" before enqueueing rather than by
+positional pop). Light output is never wrong; this is accounting only.
+
+### F-02
+**Severity:** Medium · **Area:** Sender resilience · **Timing:** before/during E1.31
+
+`SenderThread._run` ([sender.py:93-106](../backend/runtime/sender.py#L93-L106))
+has no try/except around `transport.send()`. Latent today (`NullTransport`
+cannot raise); once a real transport exists, any raise unwinds the loop and the
+daemon thread dies — the show keeps accepting commands, nothing reaches the
+wire, and the only signal is `sender.running: false` in `/api/status`. The
+WS-4.4 plan says transports never raise, which leaves no second line of defence
+around the one thread whose death silently freezes the rig. **Fix:** guard the
+send, log, continue; optionally surface consecutive failures in
+`sender_health()`.
+
+### F-03
+**Severity:** Medium · **Area:** Runtime state ownership · **Timing:** before WS-9
+
+`active_dmx_channels`, `dmx_dirty`, and `_publish_count` are module globals
+([active.py:24-43](../backend/runtime/active.py#L24-L43));
+`SenderThread` hard-imports the event, `DmxOutput` defaults to the global
+buffer, and `_handle`'s "did anything publish" check compares a global counter.
+Two `ShowEngine` instances in one process share one universe. This is the known
+WS-3.4 deferral (extends [AF-M03](#af-m03)); its documented timing — before a
+real beat thread exists — remains correct. Not an E1.31 blocker (one process,
+one engine). **Fix:** pass the event and counter in as engine-owned instance
+state; delete the module-level defaults.
+
+### F-04
+**Severity:** Medium · **Area:** Stop script · **Timing:** before E1.31 hardware output
+
+`stop-server.ps1` ([stop-server.ps1:22-34](../stop-server.ps1#L22-L34))
+`Stop-Process -Force`s anything listening on port 8800 and, as a fallback, any
+`python.exe` whose command line matches `backend[\\/]main\.py` — unanchored to
+this repository. Force-kill skips uvicorn's lifespan, so `engine.stop()` never
+runs; with a real transport that means no final blackout / Stream_Terminated
+frame — the box holds the last look, with its packets-stopped behaviour
+explicitly unverified. The fallback can also kill an unrelated project's
+`backend/main.py`. Harmless today (NullTransport); a hardware-state hazard at
+the E1.31 milestone. **Fix:** attempt graceful shutdown first with force as a
+timed fallback; anchor the fallback match to this repo's path. Exit codes are
+sensible as-is.
+
+### F-05
+**Severity:** Medium · **Area:** Shutdown / blackout · **Timing:** during E1.31
+
+Blackout-on-clean-shutdown ([D-011](decisions.md#d-011-hold-between-scenes-blackout-on-clean-shutdown),
+Accepted) is still unimplemented: `engine.stop()`
+([engine.py:165-183](../backend/server/engine.py#L165-L183)) joins workers and
+closes the transport without writing zeros. The WS-4.4 plan places blackout
+inside `E131Transport.close()` — which `stop()` calls last, so the ordering
+supports it — but nothing enforces or tests it, and `stop()` halts the *sender*
+before the *show thread* is joined, so a blackout command racing shutdown can be
+silently dropped (see [F-09](#f-09)). D-011's rationale also went stale (the
+lifecycle and sender it said were missing now exist) — corrected in this docs
+pass. **Fix (with WS-4.4):** implement the close-time blackout in the transport
+**and** an explicit synchronous blackout in `engine.stop()` before close; test
+that the last frame handed to the transport before `close()` is all zeros.
+
+### F-06
+**Severity:** Medium · **Area:** Concurrency / persistence · **Timing:** later (with WS-10)
+
+The scene-sync thread calls `library.add()` / `library.save()` (rewrites every
+collection plus config) while the show thread and event loop read the same
+`Library` ([scene_sync.py:60-84](../backend/ledfx/scene_sync.py#L60-L84);
+`Library` has no locking). This **refines [AF2-H01](#af2-h01)**: at `acc52a7`
+the overlap surface is narrow — the only mutated map is `wled_presets`, which no
+runtime reader iterates, and single dict operations are GIL-atomic — so no
+concrete corrupting path exists *today*. The real collision arrives with WS-10
+authoring routes (a second writer doing full-file rewrites). AF2-H01's
+recommended restructure (single mutation owner) stands, scheduled with WS-10.5.
+
+### F-07
+**Severity:** Low · **Area:** Sender wake path · **Timing:** during E1.31
+
+When `dmx_dirty.wait()` *times out*, the loop still clears the flag
+([sender.py:95-102](../backend/runtime/sender.py#L95-L102)). A `publish()`
+landing in the microsecond window between the timeout return and the `clear()`
+is swallowed: the frame content still goes out correctly (the buffer reference
+is read afterwards), but `changed` is False, so the ledger entries wait for the
+*next* changed send — a delayed ack and an inflated latency sample. **Fix:**
+only clear when `wait()` returned True, or re-check `is_set()` after a timeout.
+
+### F-08
+**Severity:** Low · **Area:** WebSocket · **Timing:** later
+
+One shared `asyncio.Queue` of show events is consumed by whichever connected
+socket's pump gets there first ([ws.py:61-76](../backend/server/ws.py#L61-L76));
+with two operator pages open, each sees a random subset of state/ack events.
+Documented in-code as a deliberate single-operator scope. **Fix when
+multi-operator matters:** per-socket queues with broadcast.
+
+### F-09
+**Severity:** Low · **Area:** Shutdown · **Timing:** later
+
+`_run_show` exits on the stop flag without draining the command queue, and
+`submit()` still accepts commands after stop
+([engine.py:185-219](../backend/server/engine.py#L185-L219)) — REST returns
+`accepted: true` for commands that are silently discarded. Cosmetic today.
+**Fix:** reject `submit()` once stopping; optionally error-ack drained leftovers.
+
+### F-10
+**Severity:** Low · **Area:** Diagnostics · **Timing:** during E1.31
+
+`/api/diag/selftest` ([diag.py:64-101](../backend/server/routes/diag.py#L64-L101))
+clears the live latency ring and drives up to 5000 real activations. Harmless
+against `NullTransport`; against a real transport it would strobe the physical
+rig and wipe the operational latency window mid-show. **Fix:** refuse (or
+require an explicit flag) when the configured transport is not null.
+
+### F-11
+**Severity:** Low · **Area:** Repository hygiene · **Timing:** anytime
+
+`.devdata/` is tracked, including `.devdata/logs/lightsapp.log` — a generated
+runtime artifact that churns on every dev run pointed at that folder. The JSON
+fixtures are reasonable as dev seed data (nothing reads them unless
+`LIGHTSAPP_DATA_DIR` points there; no test does), but note
+`.devdata/config.json` carries `ledfx.enabled: true` versus the compile-time
+default `false`. **Fix:** untrack and ignore `.devdata/logs/`; state the seed
+purpose in the README.
+
+### F-12
+**Severity:** Low · **Area:** Docs / UI wording · **Timing:** anytime
+
+Two places overstate the measured latency span: the operator page's
+"Click → packet" header ([frontend/index.html](../frontend/index.html) — the
+measurement starts at server-side receive, not the browser click, and ends at
+`NullTransport.send`, where no packet exists; the page's own footnote states the
+true span correctly) and project_overview.md's "sub-10 ms latency
+instrumentation" (lacked the software-path/NullTransport caveat). **Status:**
+the doc half is corrected in this docs pass; the frontend header remains open
+(frontend changes were out of scope for the documentation pass).
+
+### F-13
+**Severity:** Info · **Area:** Process tuning
+
+`tuning.apply()` (which calls `gc.freeze()`) runs in `main()` *before*
+`create_app()` loads the library ([main.py:31-33](../backend/main.py#L31-L33)),
+so library objects are not taken out of GC scans as the comment in
+[tuning.py](../backend/server/tuning.py) claims. Harmless; either move `apply()`
+after app creation or soften the comment.
+
+### F-14
+**Severity:** Info · **Area:** LEDfx resilience
+
+The `LedFxClient` is shared by the WLED worker and the scene-sync thread.
+`httpx.Client` is thread-safe; `_name_to_slug` is swapped wholesale; races on
+`_active_name`/`_reachable` can at worst skip one dedup or log once extra. This
+**narrows [AF2-M04](#af2-m04)** from Medium to a benign observation at the
+current call pattern. One residual gap: `WledOutput.apply` catches only
+`LedFxError`, and `_run_wled_worker` has no broad guard, so an unexpected
+exception type would kill the WLED worker silently — the same shape as
+[AF2-M01](#af2-m01), which remains open for the sync thread.
+
+### F-15
+**Severity:** Info · **Area:** DMX cadence · **Timing:** resolve at box verification
+
+`DMXConfig.refresh_hz = 120` now drives a *live* code path — the sender's
+keepalive (`keepalive_s = 1/refresh_hz`), i.e. a continuous ~120 Hz frame stream
+when idle — while a full 512-slot DMX frame tops out near 44 Hz on the physical
+bus. **Confirms [AF-L01](#af-l01)**, upgraded from a dormant config default to
+an active cadence choice. Resolve against the real box during WS-4.3
+verification, as already planned.
+
+## Concurrency assessment
+
+Sufficiently reliable for E1.31 integration. The single-mutator design is real:
+only the show thread touches `SceneController` and the DMX buffer; the buffer is
+replaced by atomic reference assignment of a freshly built list never mutated
+after publication, so the sender cannot observe a half-built frame; the sender's
+clear-before-read ordering turns a mid-send publish into an immediate re-send
+rather than a lost update; command ordering is deterministic (single FIFO, single
+consumer); queue overflow is a loud `ShowBusyError`. The defects found (F-01,
+F-07) live in the *accounting* seam between show thread and sender — they
+mis-deliver acks and distort latency samples but cannot corrupt universe state.
+F-03 is the one structural debt, correctly scheduled before the real beat
+thread; E1.31 adds no new producer.
+
+## Sender / transport readiness
+
+The symbolic boundary is ready for a real sACN transport. `DmxTransport` is the
+right seam: `SenderThread` needs no changes for framing, sequence numbers, or
+sockets — those belong inside `E131Transport` per the WS-4.4 plan, which is
+coherent. The hybrid send-on-change + keepalive loop maps naturally onto sACN's
+continuous-stream expectation. To settle when the transport is inserted: the
+F-02 exception guard; the frame-ownership contract at `send()` (the transport
+receives a live reference — safe because published lists are immutable after
+build, but "serialize immediately, do not retain" should be written down;
+`NullTransport` retaining `last_channels` is fine but is the pattern a real
+transport must not copy); and the F-15 keepalive rate against the real box.
+
+## Latency evidence and limitations
+
+**What is measured:** `perf_counter_ns` (monotonic — correct) stamped when the
+WebSocket frame / HTTP body is parsed on the event loop, through queue wait,
+show-thread resolution and frame build, publish/wake, sender wake, and the
+return of `NullTransport.send`. Recorded on the sender thread into a
+lock-guarded 8192-slot ring; percentile math verified correct (linear
+interpolation, sane edge cases; ring holds the 5000-sample self-test maximum).
+
+**Current evidence:** the suite asserts a single activation ack ≤ 10 000 µs and
+a 50-sample self-test p99 within budget — both passed in this validation run.
+This is **software-path evidence on one machine**, PROVEN within those
+conditions only.
+
+**What is not measured:** browser input handling, network transit, uvicorn frame
+parsing before `receive_text` returns, any real UDP send, Ethernet transit, the
+universe box, the physical DMX line (a full 512-slot frame occupies ~23 ms at
+250 kbaud regardless of software speed), fixture processing, visible light.
+The ~10 ms figure is **not** click-to-light, packet-to-fixture, hardware-proven,
+or end-to-end latency, and must not be quoted as such. Note also F-01 can
+misattribute samples under bursts — fix before using the ledger as E1.31
+acceptance evidence. **For hardware proof:** re-run the self-test with
+`E131Transport` enabled (already in the WS-4.4 acceptance list), then measure
+past the software boundary (wire capture; ideally a click-to-light check,
+accepting the DMX line's irreducible ~25 ms).
+
+## Lifecycle and shutdown
+
+Startup is well-ordered and fails safe; repeated start/stop works; clean
+shutdown reliably terminates every thread (daemons, bounded joins, sentinel +
+poll timeouts), closes the transport and HTTP client, and flushes the log queue
+via the `QueueListener`. Windows timer-period tuning is restored in a `finally`
+(and reclaimed by the OS on force-kill). **But blackout-on-clean-shutdown is not
+yet trustworthy for hardware**, because it does not exist (F-05), the sender is
+stopped before the show thread is joined (F-09 can drop a racing blackout), and
+the stop script bypasses the graceful path entirely (F-04). All three must be
+closed before a hardware session relies on shutdown semantics.
+
+## LEDfx evidence level
+
+**PROVEN (software/API level):** request/response handling, name→slug resolution
+with cache-miss re-list, activation dedup with invalidation on unreachability,
+reachability tracking with log-once suppression, sync upsert (never deletes,
+skips on failure without touching storage), latest-wins cue dispatch through the
+1-slot queue, HTTP genuinely off the show thread (the show thread pays a queue
+put; the 2 s timeout runs on the worker), client reuse and close, failures
+logged and never propagated into show state, sync failure unable to prevent
+server start. **UNCERTAIN / not established by this repository:** any actual
+visual WLED behaviour, identifier stability across LEDfx restarts (D-018's own
+caveat), strip recovery after LEDfx restarts mid-show, behaviour when LEDfx is
+reachable but slow. The `122c0bd` commit message's "testing of ledfx connection"
+is at most a local API check; nothing in the repo demonstrates hardware.
+
+## Test gaps (most consequential first)
+
+1. Command-burst ack accounting — activate + non-publishing beat before the
+   sender wakes (would have caught F-01).
+2. Sender/worker exception behaviour — a raising transport; a non-`LedFxError`
+   from the LEDfx client (F-02, F-14).
+3. Shutdown with work in flight — commands queued at `stop()`, blackout racing
+   sender stop, WS client connected through engine shutdown (F-05/F-09).
+4. Queue saturation — rapid submits asserting `ShowBusyError`/503 and recovery.
+5. Multiple WebSocket clients (documents F-08 either way).
+6. Rapid scene-replacement burst — final transport frame matches the last scene;
+   no historical accumulation.
+7. LEDfx sync against a slow/hanging client; recovery after unreachable.
+8. Tuning apply/release restoration.
+9. `stop-server` process-matching predicate.
+10. Repeated engine start/stop cycles in one process (would surface F-03).
+
+Timing-sensitive tests (`WAIT_S` polling, 20 ms keepalives) are reasonably
+guarded but inherently flake-prone on loaded machines; no flakes observed.
+
+## Documentation drift found by v3
+
+| Claim | Reality | Status |
+| --- | --- | --- |
+| D-011 rationale: "no process lifecycle … no sender for a final frame" | Both now exist; blackout half still unimplemented | Corrected in this docs pass |
+| project_overview.md "sub-10 ms latency instrumentation" | Software path ending at `NullTransport.send` | Corrected in this docs pass |
+| Operator page header "Click → packet" | Span starts at server receive, ends before any packet | **Open** (frontend out of scope for a docs pass) |
+| README/platform_support: env at `venv/`, "3.12 absent locally", "no entry point" | `.venv/` with Python 3.12.10; `backend/main.py` exists | Corrected in this docs pass ([AF2-L03](#af2-l03) partly; AGENTS.md not touched) |
+| Code comment references `docs/server_plan/`; folder was `docs/server plan/` | Folder renamed to `docs/server_plan/` in this docs pass | Corrected (from the docs side) |
+| Everything else checked (test count, symbolic-sender status, E1.31 "not started", LEDfx caveats, milestone order, WS-3.4 deferral) | Accurate | — |
+
+## Evidence classification at `acc52a7`
+
+**PROVEN** (implemented + deterministically validated in software): storage,
+migrations (v1→v4), fixture/address resolution, `SceneController` semantics,
+cue sequencing, DMX active-state generation, scene replacement, operator server,
+REST control, WebSocket control (single client), symbolic sender,
+`NullTransport`, send-on-change signaling, latency tracker/percentile math,
+software-path sub-10 ms latency (this machine, tested conditions), LEDfx HTTP
+client / scene sync / cue dispatch (API level), graceful shutdown (threads,
+resources, logging).
+
+**UNCERTAIN** (implementation exists, evidence insufficient): ack ledger under
+command bursts (F-01), command-queue saturation behaviour, multi-client
+WebSocket behaviour, physical WLED response.
+
+**PLANNED** (not implemented): E1.31 packet generation, E1.31 network output,
+real BeatSource integration, real audio capture, blackout-on-shutdown (D-011),
+authoring layer, full frontend.
+
+**HARDWARE-PROVEN:** nothing. No capability in this repository has been
+demonstrated on physical hardware.
+
+## Reconciliation with Audit v2 at `acc52a7`
+
+| Prior ID | Prior status | Status at `acc52a7` | Evidence |
+| --- | --- | --- | --- |
+| [AF2-H01](#af2-h01) | Open (High) | **Open — refined by [F-06](#f-06)** | Sync thread still mutates/saves the Library; current overlap surface narrow (only `wled_presets` mutated, no runtime reader); real collision arrives with WS-10 authoring. Restructure stands, scheduled with WS-10.5 |
+| [AF2-M01](#af2-m01) | Open (Medium) | **Open — confirmed** | `refresh_once` catches only `LedFxError` around `list_scenes`; `add()`/`save()` exceptions still kill the sync thread silently. [F-14](#f-14) records the same shape in the WLED worker |
+| [AF2-M02](#af2-m02) | Open (Medium) | **Open** | `wled_presets` still not in `ROOT_COLLECTIONS` |
+| [AF2-M03](#af2-m03) | Partly resolved | **Open (LEDfx half)** | Still no `test_ledfx*` file; client/sync covered only indirectly via outputs/server tests |
+| [AF2-M04](#af2-m04) | Open (Medium) | **Narrowed to Info by [F-14](#f-14)** | httpx client is thread-safe; remaining races benign at the current call pattern (worst case: one skipped dedup) |
+| [AF-M03](#af-m03) | Open (Medium) | **Open — extended by [F-03](#f-03)** | Now also covers `dmx_dirty` and the publish counter; timing before WS-9 confirmed correct |
+| [AF-L01](#af-l01) | Open (Low) | **Open — confirmed live by [F-15](#f-15)** | 120 Hz is now the sender keepalive cadence, not a dormant default |
+| [AF2-L03](#af2-l03) | Open (Low) | **Partly resolved (this docs pass)** | README/platform_support corrected to `.venv`; AGENTS.md and the `seed_devices.py` docstring untouched (outside a docs-only pass) |
+| [AF-H04](#af-h04) | Open (High) | **Open — unchanged** | Force-delete blast radius; before UI |
+| [AF-M01](#af-m01) | Open (Medium) | **Open — unchanged** | `channel_values` still unclamped |
+| [AF-H05](#af-h05) | Resolved | **Resolved — suite now 116 tests** | Grown from 84; server/sender/latency suites added |
+| AF2-L01/L02/L04/L05/L06, AF-L03/L04/L05, AF-M04/M05 | Open/deferred | **Unchanged** | Not in the v3 scope's blast radius; spot-checks found no drift |
+
+---
+
+# Audit v2 — Historical baseline
+
+> **Superseded in part by Audit v3 (above) at `acc52a7`.** The v2 body below is
+> preserved as written at `45dbf9b` and is accurate *for that commit*. Statements
+> such as "no app entry point", "84 tests", and "nothing transmits the universe
+> buffer from a live process" describe the v2 baseline; the operator server,
+> symbolic sender, and 116-test suite landed afterwards (`122c0bd`…`acc52a7`)
+> and are assessed in v3.
 
 **Audit commit:** `45dbf9b0b2bf112785cefa407f0e40a675deb6ce` ("chore: ignore local development environment")
 **Audit baseline includes:** `ddcadf8` (DMX_Device fixture architecture) and `7ece72d` (WLED preset-list correction)
@@ -21,7 +440,10 @@ keep their `AF-*` IDs and Audit-v2 findings carry `AF2-*` IDs.
 > per-*entry* beats remain open. **AF-M02** and **AF-M06** are resolved, **AF-M05**
 > partly. **WS-3** is built (`CueSequencer`, `SceneController`, `BeatSource` protocol,
 > `DmxOutput`/`WledOutput`). Multi-universe output remains open, as does WS-4 (E1.31
-> transport). No app entry point wires any of it yet.
+> transport). ~~No app entry point wires any of it yet.~~ **Update (2026-08-13):**
+> the operator server, `ShowEngine`, and symbolic sender landed at `122c0bd`…`acc52a7`
+> and are audited in [Audit v3](#audit-v3--operator-server--runtime) above
+> (verdict: READY WITH MINOR FIXES; suite now 116 tests).
 
 Severity reflects impact **on this project at its current stage** — a pre-runtime
 repository with no deployment, no users, and no hardware output. Nothing here is

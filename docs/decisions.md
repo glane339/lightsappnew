@@ -319,12 +319,23 @@ what an operator wants mid-show. Blacking out on clean exit avoids leaving the r
 lit with nothing controlling it.
 
 **Consequences.** Deactivation is cheap: `SceneController.deactivate()` drops both
-sequencers and touches no output, so the buffer keeps the last look. `DmxOutput.blackout()`
-exists for shutdown but nothing calls it — there is no process lifecycle to hang it off,
-and no sender for a final frame to leave through. When there is, shutdown must write
-zeros and send one final frame *before* closing the socket. LEDfx needs an equivalent
-explicit action ([wled_ledfx_architecture.md](wled_ledfx_architecture.md#64-shutdown))
-since it keeps rendering regardless.
+sequencers and touches no output, so the buffer keeps the last look. The blackout
+half is still unimplemented, but the earlier reason no longer holds: as of
+`acc52a7` the process lifecycle (`engine.stop()` in the app lifespan) and the
+sender thread both exist — `engine.stop()` simply never writes zeros before
+closing the transport ([Audit v3 F-05](audit_findings.md#f-05)). The operator
+`blackout` *command* exists and works mid-show; the *shutdown* blackout does not.
+The plan is for WS-4.4's `E131Transport.close()` to send a blackout /
+Stream_Terminated frame, with an explicit engine-level blackout in `stop()`
+before close as belt and braces — shutdown must write zeros and send one final
+frame *before* closing the socket, and a test should assert zeros-then-close.
+Note the shutdown ordering hazard: the sender is stopped before the show thread
+is joined, so a blackout command racing shutdown can be dropped
+([F-09](audit_findings.md#f-09)), and `stop-server.ps1`'s force-kill bypasses
+the lifespan entirely ([F-04](audit_findings.md#f-04)). LEDfx needs an
+equivalent explicit action
+([wled_ledfx_architecture.md](wled_ledfx_architecture.md#64-shutdown)) since it
+keeps rendering regardless.
 
 **Alternatives.** Blackout on every deactivation (rejected: visible gap); hold
 always, including on exit (rejected: rig stays lit after the app closes).

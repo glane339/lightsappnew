@@ -34,6 +34,13 @@ There is an app entry point (`backend/main.py`) and a no-build operator page.
 Real audio capture and DMX network output are absent. A pytest suite covers storage,
 sequencing, outputs, the sender wake path, and the server.
 
+The server/runtime layer was **independently audited at `acc52a7`**
+([Audit v3](audit_findings.md#audit-v3--operator-server--runtime), 2026-08-13):
+verdict **READY WITH MINOR FIXES** — no blocker to *beginning* E1.31, with
+recommended fixes (F-01/F-02/F-04/F-05, none yet implemented) folded into the
+WS-4.4 window. Universe-box verification remains next, then real E1.31 transport.
+Nothing is hardware-proven; the latency evidence is software-path only.
+
 | Layer | Status | Evidence |
 | --- | --- | --- |
 | Persistence / storage | **Substantially implemented** | [`backend/storage/`](../backend/storage/) — schema v4, migrations, integrity |
@@ -111,7 +118,9 @@ What the code actually does today:
 - Polls LEDfx for scene names and upserts `WLED_Preset` rows when enabled —
   [`ledfx/scene_sync.py`](../backend/ledfx/scene_sync.py).
 - Runs the operator server: scene activate/deactivate/blackout/beat over WebSocket
-  and REST, with sub-10 ms latency instrumentation —
+  and REST, with latency instrumentation showing a sub-10 ms **software path** —
+  measured from command received on the server to `NullTransport.send` returning;
+  no packet, network, DMX line, or fixture time is included —
   [`backend/server/`](../backend/server/), [`frontend/index.html`](../frontend/index.html).
 - Wakes a symbolic DMX sender on buffer change (`publish()` → `dmx_dirty` →
   `SenderThread` → `NullTransport`) —

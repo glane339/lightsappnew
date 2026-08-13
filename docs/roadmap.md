@@ -134,6 +134,15 @@ change-plus-keepalive cadence, and blackout on shutdown.
 `SenderThread`, and `publish()`/`dmx_dirty` in the operator server. WS-4.4 (real
 packets) not started — blocked on universe-box verification (WS-4.3, D-017).
 
+**Audit (2026-08-13).** The server/runtime layer was independently audited at
+`acc52a7` ([Audit v3](audit_findings.md#audit-v3--operator-server--runtime)):
+**READY WITH MINOR FIXES** — the `DmxTransport` seam is sound, no blocker to
+beginning this phase, and the phase order (box verification → E1.31 → real
+beats → authoring → frontend) is confirmed. Recommended fixes F-01/F-02/F-04/F-05
+fold into this phase's window and are **not yet implemented**. The existing
+latency evidence is a software path ending at `NullTransport.send` — not
+hardware-proven; the p99 budget must be re-proven with the real transport.
+
 **Exit criteria.**
 - Packet bytes are asserted in tests without opening a socket.
 - Sequence numbers increment per universe and wrap correctly.
