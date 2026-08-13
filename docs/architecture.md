@@ -454,8 +454,10 @@ flowchart TD
     style D fill:#ffe6e6
 ```
 
-Steps shaded red do not exist. Today the chain stops at a positionally-packed
-512-value list with no fixture lookup and no sender. Details and the open
+Steps shaded red do not exist. Today the chain resolves looks by patched address
+into one 512-value list, marks it dirty, and wakes
+[`runtime/sender.py`](../backend/runtime/sender.py), which calls `NullTransport`.
+Packet framing, sequence numbers, and UDP are still Target. Details and the open
 questions on cadence, unicast/multicast, priority, and sequence numbering are in
 [fixture_and_transport_strategy.md](fixture_and_transport_strategy.md).
 
@@ -499,7 +501,7 @@ flowchart TB
         c3["CueSequencer ×2<br/>independent"]
         c5["build_channels<br/>by patched address"]
         c6["one global 512 list"]
-        c7["(no sender)"]
+        c7["SenderThread<br/>NullTransport"]
         c8["LedFxClient<br/>activate_scene"]
         c9["(blob storage only)"]
         c2 --> c1 --> c3
@@ -518,7 +520,7 @@ Full detail with severities in [audit_findings.md](audit_findings.md). Summary:
 | --- | --- | --- |
 | 1 | Single-universe buffer; `DMX_Device.universe` persisted but rejected beyond universe 1 | Blocks a second universe |
 | 2 | Beat duration is per cue *list*, not per entry | Every cue in a list holds for the same time |
-| 3 | No E1.31 sender | The universe buffer reaches no hardware |
+| 3 | No E1.31 packets | Symbolic `NullTransport` sender exists; the universe buffer still reaches no hardware |
 | 4 | Model/record duplication with hand-written converters | Every field change requires multiple edits |
 | 5 | Module-global universe buffer, no locking; LEDfx called on the beat path | Will race once an audio thread exists; a hung LEDfx stalls beats |
 | 6 | No value-range validation on DMX channel values | Out-of-range values would reach the wire unclamped |

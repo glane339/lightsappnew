@@ -22,12 +22,14 @@ Follow-up.
 | [D-010](#d-010-basement-reliability-outranks-generality) | Basement reliability outranks generality | Proposed |
 | [D-011](#d-011-hold-between-scenes-blackout-on-clean-shutdown) | Hold between scenes, blackout on clean shutdown | Accepted |
 | [D-012](#d-012-network-failures-must-not-reach-persistent-state) | Network failures must not reach persistent state | Proposed |
-| [D-013](#d-013-hardware-output-defaults-to-a-null-implementation) | Hardware output defaults to a null implementation | Proposed |
+| [D-013](#d-013-hardware-output-defaults-to-a-null-implementation) | Hardware output defaults to a null implementation | Accepted |
 | [D-014](#d-014-fixtures-become-first-class-persisted-objects) | Fixtures become first-class persisted objects | Proposed |
 | [D-015](#d-015-the-reference-graph-stays-declarative) | The reference graph stays declarative | Accepted |
 | [D-016](#d-016-audio-event-delivery-mechanism) | Audio event delivery mechanism | Open |
 | [D-017](#d-017-sacn-unicast-versus-multicast) | sACN unicast versus multicast | Open |
 | [D-018](#d-018-ledfx-preset-identifier-form) | LEDfx preset identifier form | Accepted |
+| [D-019](#d-019-send-on-change--keepalive-cadence) | Send-on-change + keepalive cadence | Accepted |
+| [D-020](#d-020-hand-rolled-e131-framing) | Hand-rolled E1.31 framing | Proposed |
 
 ---
 
@@ -206,7 +208,7 @@ documents (rejected: duplicates shared objects).
 
 ## D-007: E1.31 / sACN is the DMX transport
 
-**Status:** Accepted — supplied project requirement; no transport code exists.
+**Status:** Accepted — supplied project requirement; only a symbolic sender exists.
 
 **Context.** The rig uses a custom DMX universe box that receives Ethernet traffic
 and drives the physical DMX bus. Options are E1.31/sACN, Art-Net, or a USB DMX
@@ -228,8 +230,9 @@ from the repository); USB DMX (rejected: the hardware is networked).
 **Follow-up.** `DMXConfig` now carries `universe`, `host`, `port`, and `priority`,
 recovered from the previous version of the app's config file
 ([AF-M06](audit_findings.md#af-m06)); it still lacks a unicast/multicast setting and
-a source name. **The box's actual expectations remain unverified** — recovered values
-are not tested ones — and must be confirmed before this is marked Accepted.
+a source name. **The box's actual expectations remain unverified.** A symbolic
+sender ([`runtime/sender.py`](../backend/runtime/sender.py)) exists and defaults to
+`NullTransport`; no E1.31 packet is framed or sent.
 
 ---
 
@@ -358,7 +361,8 @@ couples transport health to persistent data).
 
 ## D-013: Hardware output defaults to a null implementation
 
-**Status:** Proposed.
+**Status:** Accepted for the DMX path (`NullTransport`); LEDfx still defaults off via
+`LedfxConfig.enabled`.
 
 **Context.** Development happens without the rig powered on, and tests must never
 emit anything.
@@ -367,16 +371,68 @@ emit anything.
 no debugging session, and no accidental import can transmit a packet or an HTTP
 call. Opting in to real output is a deliberate act.
 
-**Consequences.** Each output path defines a narrow interface with a null, a
-recording, and a real implementation. Config selects; the default is null. This is
-what makes the whole system developable and testable with no hardware, and it is a
-precondition for any laser work.
+**Consequences.** The DMX path is `DmxTransport` with `NullTransport` as the only
+implementation. A real E1.31 class is not in the tree. Config still carries
+destination fields, but nothing reads them for a socket.
 
 **Alternatives.** Real-by-default with a test flag (rejected: one forgotten flag
 sends real traffic).
 
-**Follow-up.** Nothing implements this yet — it must land with the first output
-component. See [current_sprint.md](current_sprint.md#ws-6--hardware-independent-testing).
+**Follow-up.** Real sACN remains parked on universe-box verification (D-017, WS-4.4).
+See [project_overview.md § Next steps](project_overview.md#next-steps-priority-order).
+
+---
+
+## D-019: Send-on-change + keepalive cadence
+
+**Status:** Accepted — implemented in the operator server.
+
+**Context.** A fixed-cadence sender alone blows the sub-10 ms software budget: polling
+at 40 Hz adds 12.5 ms average queueing before a changed buffer leaves the machine.
+The old transport doc assumed a tick-driven loop.
+
+**Decision.** Hybrid cadence: wake immediately when the universe buffer changes
+(`publish()` sets `dmx_dirty`); re-send on a keepalive timeout when idle so a
+receiver that missed a packet can recover. `SenderThread` owns the wait loop;
+`DmxTransport.send` is the only output seam.
+
+**Consequences.** [`runtime/active.py`](../backend/runtime/active.py) exposes
+`publish()` and `dmx_dirty`. [`runtime/sender.py`](../backend/runtime/sender.py)
+implements the thread. Keepalive interval comes from `DMXConfig.refresh_hz` (still
+defaults to 120 Hz — [AF-L01](audit_findings.md#af-l01) recommends lowering once a
+real transport exists). Latency is measured to the transport `send()` call, so
+swapping `NullTransport` for `E131Transport` does not change the instrumentation
+shape.
+
+**Alternatives.** Fixed tick only (rejected: violates latency budget). Change-only
+with no keepalive (rejected: fragile over UDP).
+
+**Follow-up.** Real transport must preserve this wake model; only `DmxTransport`
+changes.
+
+---
+
+## D-020: Hand-rolled E1.31 framing
+
+**Status:** Proposed — next implementation step after universe-box verification.
+
+**Context.** WS-4.4 needs to frame 512 DMX slots into E1.31 DATA packets. Options
+are a library (`sacn`, `python-sacn`) or hand-rolled bytes (~638-byte layout).
+
+**Decision (proposed).** Hand-roll framing in `runtime/e131.py` with byte-asserted
+unit tests (WS-4.4). Keeps the send-on-change wake fully under our control, avoids a
+new production dependency until sign-off, and matches the server build plan.
+
+**Consequences.** `E131Transport` in `runtime/sender.py` calls the framer and owns
+the UDP socket. Tests inject a fake socket — no real packets in CI. The `sacn`
+library remains the documented fallback if framing maintenance becomes costly.
+
+**Alternatives.** `sacn` library (viable; adds dependency and may fight custom
+wake timing). Art-Net (rejected: wrong protocol for this hardware).
+
+**Follow-up.** Land only after [D-017](decisions.md#d-017-sacn-unicast-versus-multicast)
+is settled against the physical box. Implementation checklist in
+[current_sprint.md § 4.4](current_sprint.md#44-real-sacn-sender--next-hardware-milestone).
 
 ---
 

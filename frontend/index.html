@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lights — Operator</title>
+<!--
+  Milestone 1 operator page: no build step, no framework, one file.
+
+  It doubles as the latency harness, which is why the readout is as prominent as the
+  scene buttons — the round trip it shows is the number the 10 ms budget is about.
+-->
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #0c0d10;
+    --panel: #16181d;
+    --line: #272b33;
+    --text: #e8eaed;
+    --muted: #9aa3af;
+    --accent: #4c8dff;
+    --good: #38d39f;
+    --bad: #ff5d5d;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 24px;
+    background: var(--bg);
+    color: var(--text);
+    font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  header {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    margin-bottom: 20px;
+  }
+  h1 { font-size: 20px; margin: 0; letter-spacing: -0.01em; }
+  .conn { font-size: 13px; color: var(--muted); }
+  .conn.live { color: var(--good); }
+  .conn.dead { color: var(--bad); }
+  .grid {
+    display: grid;
+    grid-template-columns: minmax(0, 2fr) minmax(260px, 1fr);
+    gap: 16px;
+    align-items: start;
+  }
+  @media (max-width: 760px) { .grid { grid-template-columns: 1fr; } }
+  section {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 16px;
+  }
+  h2 {
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--muted);
+    margin: 0 0 12px;
+  }
+  .scenes { display: flex; flex-wrap: wrap; gap: 8px; }
+  button {
+    font: inherit;
+    color: var(--text);
+    background: #21242b;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 10px 14px;
+    cursor: pointer;
+    transition: background 80ms, border-color 80ms;
+  }
+  button:hover { background: #2a2e37; }
+  button:active { transform: translateY(1px); }
+  button.on { border-color: var(--accent); background: #1c2942; }
+  button.danger:hover { border-color: var(--bad); }
+  .transport { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+  .empty { color: var(--muted); font-size: 14px; }
+  dl { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; margin: 0; }
+  dt { color: var(--muted); font-size: 13px; }
+  dd {
+    margin: 0;
+    font-variant-numeric: tabular-nums;
+    font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  }
+  .big {
+    font-size: 30px;
+    font-variant-numeric: tabular-nums;
+    font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+    margin: 2px 0 14px;
+  }
+  .big.good { color: var(--good); }
+  .big.bad { color: var(--bad); }
+  .note { color: var(--muted); font-size: 12px; margin-top: 12px; }
+  #log {
+    margin-top: 16px;
+    max-height: 140px;
+    overflow-y: auto;
+    font-family: ui-monospace, Consolas, monospace;
+    font-size: 12px;
+    color: var(--muted);
+    white-space: pre-wrap;
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>Lights — Operator</h1>
+  <span id="conn" class="conn">connecting…</span>
+</header>
+
+<div class="grid">
+  <section>
+    <h2>Scenes</h2>
+    <div id="scenes" class="scenes"><span class="empty">loading…</span></div>
+    <div class="transport">
+      <button id="beat">Beat (space)</button>
+      <button id="deactivate">Deactivate</button>
+      <button id="blackout" class="danger">Blackout</button>
+      <button id="reload">Reload scenes</button>
+    </div>
+    <div id="log"></div>
+  </section>
+
+  <section>
+    <h2>Click → packet</h2>
+    <div id="last" class="big">— µs</div>
+    <dl>
+      <dt>state</dt><dd id="state">unknown</dd>
+      <dt>samples</dt><dd id="count">0</dd>
+      <dt>p50</dt><dd id="p50">—</dd>
+      <dt>p99</dt><dd id="p99">—</dd>
+      <dt>sender</dt><dd id="sender">—</dd>
+      <dt>frames</dt><dd id="frames">—</dd>
+      <dt>LEDfx</dt><dd id="ledfx">—</dd>
+    </dl>
+    <div class="note">
+      Budget is 10 000 µs (10 ms) at p99, measured from the command arriving to the frame
+      leaving the sender.
+    </div>
+  </section>
+</div>
+
+<script>
+"use strict";
+
+const BUDGET_US = 10000;
+const els = id => document.getElementById(id);
+const conn = els("conn");
+let socket = null;
+let activeSceneId = null;
+
+function log(line) {
+  const box = els("log");
+  const stamp = new Date().toLocaleTimeString();
+  box.textContent = `${stamp}  ${line}\n` + box.textContent;
+}
+
+function setConnection(text, cls) {
+  conn.textContent = text;
+  conn.className = "conn" + (cls ? " " + cls : "");
+}
+
+function connect() {
+  const scheme = location.protocol === "https:" ? "wss" : "ws";
+  socket = new WebSocket(`${scheme}://${location.host}/ws/show`);
+
+  socket.onopen = () => setConnection("connected", "live");
+  socket.onclose = () => {
+    setConnection("disconnected — retrying", "dead");
+    setTimeout(connect, 1500);
+  };
+  socket.onmessage = event => {
+    const msg = JSON.parse(event.data);
+    if (msg.t === "state") {
+      applyState(msg);
+    } else if (msg.t === "ack") {
+      // Deliberately no status fetch here: one request per ack turns a burst of
+      // activations into a burst of requests against the server being measured.
+      showLatency(msg.latency_us);
+    } else if (msg.t === "error") {
+      log(`error: ${msg.message}`);
+    }
+  };
+}
+
+function send(message) {
+  if (!socket || socket.readyState !== WebSocket.OPEN) {
+    log("not connected");
+    return;
+  }
+  socket.send(JSON.stringify(message));
+}
+
+function applyState(state) {
+  activeSceneId = state.active_scene_id;
+  els("state").textContent = state.is_active ? `active: ${shortId(activeSceneId)}` : "idle";
+  for (const button of document.querySelectorAll("[data-scene]")) {
+    button.classList.toggle("on", button.dataset.scene === activeSceneId);
+  }
+}
+
+function showLatency(us) {
+  const node = els("last");
+  node.textContent = `${us.toLocaleString()} µs`;
+  node.className = "big " + (us <= BUDGET_US ? "good" : "bad");
+}
+
+function shortId(id) {
+  return id && id.length > 10 ? id.slice(0, 10) + "…" : id || "—";
+}
+
+async function refreshStatus() {
+  try {
+    const status = await (await fetch("/api/status")).json();
+    els("count").textContent = status.latency.count;
+    els("p50").textContent = status.latency.count ? `${status.latency.p50_us} µs` : "—";
+    els("p99").textContent = status.latency.count ? `${status.latency.p99_us} µs` : "—";
+    els("sender").textContent = `${status.sender.transport}${status.sender.running ? "" : " (stopped)"}`;
+    els("frames").textContent = status.sender.frames_sent ?? "—";
+    els("ledfx").textContent = status.ledfx.enabled
+      ? (status.ledfx.reachable ? "reachable" : "unreachable")
+      : "disabled";
+  } catch (err) {
+    setConnection("status fetch failed", "dead");
+  }
+}
+
+async function loadScenes() {
+  const box = els("scenes");
+  try {
+    const data = await (await fetch("/api/scenes")).json();
+    box.textContent = "";
+    if (!data.scenes.length) {
+      box.innerHTML = '<span class="empty">No scenes in the library yet.</span>';
+      return;
+    }
+    for (const scene of data.scenes) {
+      const button = document.createElement("button");
+      button.textContent = shortId(scene.id);
+      button.title = `${scene.id} — sensitivity ${scene.sensitivity}`;
+      button.dataset.scene = scene.id;
+      button.classList.toggle("on", scene.id === activeSceneId);
+      button.onclick = () => send({ t: "activate", id: scene.id });
+      box.appendChild(button);
+    }
+  } catch (err) {
+    box.innerHTML = '<span class="empty">Could not load scenes.</span>';
+  }
+}
+
+els("beat").onclick = () => send({ t: "beat" });
+els("deactivate").onclick = () => send({ t: "deactivate" });
+els("blackout").onclick = () => send({ t: "blackout" });
+els("reload").onclick = () => { loadScenes(); refreshStatus(); };
+
+document.addEventListener("keydown", event => {
+  if (event.code === "Space" && event.target === document.body) {
+    event.preventDefault();
+    send({ t: "beat" });
+  }
+});
+
+connect();
+loadScenes();
+refreshStatus();
+setInterval(refreshStatus, 2000);
+</script>
+</body>
+</html>

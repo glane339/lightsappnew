@@ -118,17 +118,21 @@ output present.
 
 **Status.** **Mostly done** — `CueSequencer`, `SceneController`, `DmxOutput`,
 `WledOutput`, and `BeatSource`/`ManualBeatSource` are implemented and tested.
-Remaining: move `active_dmx_channels` out of module globals and add locking
-([AF-M03](audit_findings.md#af-m03)); wire into an entry point.
+Operator server wires them via `ShowEngine` ([WS-11.1](current_sprint.md#111-app-entry-point-and-process-lifecycle)).
+Remaining: real beat detection (WS-9); symbolic sender only until WS-4.4.
 
 ---
 
 ## Phase 4 · Reliable DMX universe state and E1.31 transport
 
 **Scope.** Multi-universe buffers with dirty tracking and clamped writes; a sender
-interface with null/recording/real implementations; a network configuration that can
+interface with null/real implementations; a network configuration that can
 actually describe an sACN destination; the real sender with sequence numbers, hybrid
 change-plus-keepalive cadence, and blackout on shutdown.
+
+**Progress (2026-08-13).** WS-4.2 done: `DmxTransport`, `NullTransport`,
+`SenderThread`, and `publish()`/`dmx_dirty` in the operator server. WS-4.4 (real
+packets) not started — blocked on universe-box verification (WS-4.3, D-017).
 
 **Exit criteria.**
 - Packet bytes are asserted in tests without opening a socket.

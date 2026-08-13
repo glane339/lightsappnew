@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import queue
 from typing import List, Optional
 
 import pytest
@@ -7,7 +8,7 @@ from conftest import build_cycling_scene_graph
 
 from ledfx.client import LedFxError, LedFxScene, NullLedFxClient
 from models.Active_DMX_Channels import UNIVERSE_SIZE, Active_DMX_Channels
-from runtime.outputs import DmxOutput, WledOutput
+from runtime.outputs import AsyncCueOutput, DmxOutput, WledOutput
 from storage.library import Library
 
 
@@ -90,3 +91,23 @@ def test_wled_failure_is_logged_not_raised(caplog: pytest.LogCaptureFixture) -> 
 
     assert client.attempts == ["wled-one"]
     assert "did not accept scene" in caplog.text
+
+
+def test_async_cue_output_enqueues_without_calling_ledfx() -> None:
+    work = queue.Queue(maxsize=4)
+    output = AsyncCueOutput(work)
+
+    output.apply("wled-one")
+
+    assert work.get_nowait() == "wled-one"
+    assert work.empty()
+
+
+def test_async_cue_output_drops_the_oldest_when_full() -> None:
+    work = queue.Queue(maxsize=1)
+    output = AsyncCueOutput(work)
+    output.apply("old")
+    output.apply("new")
+
+    assert work.get_nowait() == "new"
+    assert work.empty()

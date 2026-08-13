@@ -3,9 +3,12 @@
 How DMX data is modelled, addressed, held in memory, and (eventually) put on the
 wire. Companion to [architecture.md](architecture.md).
 
-> **Status: model partially implemented, transport entirely absent.** There is no
-> E1.31/sACN code, no socket, no UDP, and no networking dependency in this
-> repository. Everything in §5 onward is Target.
+> **Status: model implemented; E1.31 packets absent.** Looks resolve into
+> [`Active_DMX_Channels`](../backend/models/Active_DMX_Channels.py) by patched
+> address. [`runtime/sender.py`](../backend/runtime/sender.py) is a symbolic sender:
+> `DmxTransport` + `NullTransport` + a send-on-change/keepalive thread. There is no
+> packet framing, no socket, and no UDP. Everything in §5 (the real sACN path) remains
+> Target.
 
 ---
 
@@ -185,10 +188,12 @@ The important behaviours to add alongside it:
 
 ## 5. E1.31 / sACN transport
 
-> **Nothing below is implemented.** There is no sACN library in
-> [`requirements.txt`](../requirements.txt), no socket call, and no packet code
-> anywhere in the repository. This section documents intent and the open decisions,
-> and deliberately makes no claim about how the receiving hardware behaves.
+> **Nothing below is implemented.** The symbolic sender in
+> [`runtime/sender.py`](../backend/runtime/sender.py) stops at `NullTransport.send`.
+> There is no sACN library in [`requirements.txt`](../requirements.txt), no socket
+> call, and no packet code anywhere in the repository. This section documents intent
+> and the open decisions, and deliberately makes no claim about how the receiving
+> hardware behaves.
 
 E1.31 (ANSI E1.31, "sACN") carries DMX512 universe data over UDP. Its role in this
 system is narrow: **take a 512-byte universe buffer and put it on the network.** It
@@ -243,7 +248,7 @@ answered from the repository.
 | **Unicast vs multicast** | Unicast to the box's IP; multicast to `239.255.x.y` derived from universe | **Unicast recommended** for a single known receiver on a home LAN: no IGMP snooping concerns, no multicast flooding to unrelated devices, trivially debuggable. Multicast is for rigs with many receivers. |
 | **Destination** | Static IP in config; discovery | Static. Discovery is unnecessary complexity for one box. |
 | **Universe numbering** | Must match the box's expectation | **Unverified.** Do not guess. |
-| **Cadence** | Continuous at N Hz; on change only; hybrid | **Hybrid recommended:** send immediately on change, plus a keepalive refresh (~1 Hz or slower) so a receiver that missed a packet or rebooted re-syncs. Pure change-only is fragile over UDP; pure continuous at 120 Hz is wasteful. |
+| **Cadence** | Continuous at N Hz; on change only; hybrid | **Decided — hybrid** ([D-019](decisions.md#d-019-send-on-change--keepalive-cadence)): implemented in `SenderThread`; keepalive from `DMXConfig.refresh_hz` |
 | **Sequence numbers** | Per-universe `uint8`, incrementing, wrapping | Required by the protocol for out-of-order detection. Must be per universe. |
 | **Priority** | Default 100 | Only matters with multiple sources. Expose it, default it, do not agonise over it. |
 | **Source name** | A stable, human-readable CID/name | Helps enormously when sniffing traffic. Pick one and keep it constant. |
@@ -251,17 +256,34 @@ answered from the repository.
 
 ### 5.3 Error handling and shutdown
 
-Requirements, none of which are currently met because no transport exists:
+Requirements for the **real** transport (`E131Transport`, not yet in the tree):
 
 - **A network failure must never touch persistent configuration.** The sender has
   no reason to hold a `Library` reference at all. See
   [decisions.md](decisions.md#d-012-network-failures-must-not-reach-persistent-state).
 - **Send errors are logged and retried, never fatal.** A transient `ENETUNREACH`
   should not take the show down.
-- **Explicit start and stop.** The sender owns a socket; the socket needs a defined
-  lifecycle, and shutdown must be idempotent.
+- **Explicit start and stop.** The transport owns a socket; shutdown must be
+  idempotent.
 - **Clean shutdown sends a blackout frame**, then closes. Otherwise the box holds
   the last received values indefinitely and the rig stays lit after the app exits.
+
+`NullTransport` today satisfies none of the wire requirements by design — it only
+proves the wake path.
+
+### 5.4 Next: actual E1.31 transport (WS-4.4)
+
+The symbolic half is done. Adding real output should **not** rewrite `SenderThread`.
+
+| Step | Work |
+| --- | --- |
+| 1. Verify box | Answer §6 questions; settle [D-017](decisions.md#d-017-sacn-unicast-versus-multicast); add `source_name` and transport mode to `DMXConfig` (WS-4.3) |
+| 2. Framing | New [`runtime/e131.py`](../backend/runtime/e131.py): `build_data_packet()`, sequence wrap, CID from source name ([D-020](decisions.md#d-020-hand-rolled-e131-framing)) |
+| 3. Transport | `E131Transport` in [`runtime/sender.py`](../backend/runtime/sender.py): `send()` + `close()`; inject socket in tests |
+| 4. Opt-in | Default remains `NullTransport`; config flag enables `E131Transport` only after manual box test |
+| 5. Accept | Byte tests without real UDP; p99 ≤ 10 ms with transport enabled; shutdown blackout verified on hardware |
+
+Full checklist: [current_sprint.md § 4.4](current_sprint.md#44-real-sacn-sender--next-hardware-milestone).
 
 ---
 
@@ -288,8 +310,10 @@ essential or merely tidy.
 
 ## 7. Change detection
 
-With dirty tracking (§4) the sender can skip unchanged universes. Recommended
-policy, matching §5.2:
+This is now implemented, symbolically, in [`SenderThread`](../backend/runtime/sender.py):
+`publish()` sets `dmx_dirty`, the sender wakes immediately, and a keepalive timeout
+re-sends the last buffer. The transport it calls is still `NullTransport`. The
+diagram below is the same policy a real E1.31 class will inherit.
 
 ```mermaid
 flowchart TD
@@ -308,17 +332,17 @@ silently-stale rig.
 
 ## 8. Hardware abstraction, simulation, and testing
 
-This is the part that makes the rest safe to develop, and it should exist **before**
-any real sender.
+This is the part that makes the rest safe to develop. The symbolic half exists
+**before** any real sender.
 
-Define one narrow interface — conceptually `send(universe: int, channels: bytes)`
-plus `start()`/`stop()` — with three implementations:
+The live interface is `DmxTransport.send(channels)` plus `SenderThread.start()` /
+`stop()`, with one implementation today:
 
 | Implementation | Purpose | Default? |
 | --- | --- | --- |
-| `NullDmxSender` | Discards everything | **Yes** — nothing transmits unless explicitly configured |
-| `RecordingDmxSender` | Captures frames in memory for assertions | Test only |
-| `SacnDmxSender` | The real thing | Opt-in via config |
+| `NullTransport` | Counts frames, opens no socket | **Yes** — nothing transmits |
+| `RecordingDmxSender` | Captures frames in memory for assertions | Test only (not a named class; tests use a local fake) |
+| Real E1.31 transport | The actual packet path | **Not present** — parked on universe-box verification |
 
 With that in place, the testable surface without any hardware or network is:
 
@@ -342,7 +366,7 @@ against the physical box is a manual, deliberate activity. See
 | Failure | Required behaviour |
 | --- | --- |
 | Destination unreachable | Log once, keep retrying, keep the show running. Never crash. |
-| Socket creation fails at startup | Surface clearly; fall back to `NullDmxSender` rather than exiting. |
+| Socket creation fails at startup | Surface clearly; fall back to `NullTransport` rather than exiting. |
 | Look references a missing fixture | Reject at load time via the `REFERENCES` integrity check, not at send time. |
 | Channel value out of range | Clamp at the buffer boundary and log. Never transmit invalid data. |
 | App exits | Blackout frame, then close the socket (§5.3). |

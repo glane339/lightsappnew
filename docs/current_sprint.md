@@ -12,6 +12,11 @@ Longer horizon in [roadmap.md](roadmap.md).
 > when work resumes. Current maturity in
 > [project_overview.md](project_overview.md#current-maturity).
 
+> **Updated 2026-08-13.** Operator server M1 landed (see
+> [project_overview.md](project_overview.md#next-steps-priority-order)). Symbolic
+> sender is done; **actual E1.31 transport (WS-4.4) is the next hardware milestone**
+> after universe-box verification.
+
 ### Landed (no action needed)
 
 | Area | Status |
@@ -21,21 +26,27 @@ Longer horizon in [roadmap.md](roadmap.md).
 | WLED list registration, `Preset.wled_preset_list_id` | Done |
 | List-level `beats`, bounded `sensitivity` | Done (schema v4) |
 | `CueSequencer`, `SceneController`, outputs, `BeatSource` protocol | Done (WS-3) |
-| 84-test suite (storage + sequencing + outputs) | Done |
-| Audit v2 merge + post-audit doc refresh | Done (this session) |
+| Symbolic DMX sender (`DmxTransport`, `NullTransport`, `SenderThread`) | Done (WS-4.2) |
+| Send-on-change seam (`publish()` / `dmx_dirty`) | Done |
+| Operator server M1 (`backend/main.py`, `/ws/show`, REST control, latency) | Done (WS-11.1) |
+| M1 operator page (`frontend/index.html`) | Done |
+| WLED off show thread (`AsyncCueOutput` + worker) | Done (WS-5 wiring in engine) |
+| 116-test suite | Done |
+| Audit v2 merge + post-audit doc refresh | Done |
 
 ### Build next (dependency order)
 
-1. **WS-4 · E1.31 transport** — parked until the universe box is verified; unblocks
-   hardware DMX.
-2. **WS-5 · LEDfx integration** — wire `WledOutput` into a live process; client/sync
-   tests ([AF2-M03](audit_findings.md#af2-m03)).
+1. **Universe box verification** — record answers to the three questions in
+   [fixture_and_transport_strategy.md §6](fixture_and_transport_strategy.md#6-the-custom-universe-box-boundary);
+   settle [D-017](decisions.md#d-017-sacn-unicast-versus-multicast); finish WS-4.3
+   config fields (`source_name`, transport mode).
+2. **WS-4.4 · Actual E1.31 sender** — `E131Transport` behind `DmxTransport`; hand-rolled
+   framing + byte tests; socket injected in tests; opt-in via config after box sign-off.
+   See [WS-4.4](#44-real-sacn-sender) below.
 3. **WS-9 · Real beat detection** — live audio; `ManualBeatSource` stays for tests.
-4. **App entry point** — open `Library`, wire `SceneController` + beat source +
-   outputs (+ optional LEDfx); see [WS-11.1](#111-app-entry-point-and-process-lifecycle).
-5. **WS-10 · Show authoring frameworks** — typed create/update for cue lists,
-   presets, and scenes; HTTP API; frontend contract. **Required before authoring UI.**
-6. **WS-11 · Frontend and HTTP server** — `frontend/` client over WS-10 API.
+4. **WS-10 · Show authoring frameworks** — typed create/update; HTTP API; required
+   before full authoring UI.
+5. **WS-11.2 · Full frontend** — replace M1 picker with WS-10 client.
 
 Longer arc: [roadmap.md](roadmap.md) phases 4 → 5 → 7 → **7a** → 8.
 
@@ -286,11 +297,11 @@ migratable through `REFERENCES` in [`records.py`](../backend/storage/records.py)
 
 ---
 
-## WS-4 · DMX state and E1.31 output — **PARKED**
+## WS-4 · DMX state and E1.31 output
 
-> **Parked** pending a verified transport story for the universe box and a
-> redesigned show-control model. Null/recording sender ideas may still apply
-> later; do not build sACN on the current assumptions.
+> **Partially landed.** The symbolic sender and send-on-change path are live in the
+> operator server. **Packet framing and UDP (WS-4.4) remain blocked** on universe-box
+> verification and WS-4.3 config completion.
 
 ### 4.1 Multi-universe active state with dirty tracking
 - **Goal.** Per-universe 512-value buffers, dirty flags, clamped writes, blackout.
@@ -299,20 +310,24 @@ migratable through `REFERENCES` in [`records.py`](../backend/storage/records.py)
 - **Dependencies.** WS-2.1.
 - **Acceptance.** Writes clamp to 0–255; dirty set on write, cleared on send;
   blackout zeroes and marks dirty; buffers are never persisted.
-- **Status.** Not started.
+- **Status.** **Partly done** — single-universe dirty tracking via `publish()` /
+  `dmx_dirty` in [`runtime/active.py`](../backend/runtime/active.py); multi-universe
+  and clamp-at-write still open.
 - **Files.** [`models/Active_DMX_Channels.py`](../backend/models/Active_DMX_Channels.py),
   `backend/runtime/`.
 
 ### 4.2 Sender interface with a null default
-- **Goal.** `send(universe, channels)` / `start()` / `stop()`, with `Null` and
-  `Recording` implementations. **No real sender yet.**
+- **Goal.** `send(channels)` / `start()` / `stop()`, with a null implementation.
+  **No real sender.**
 - **Why.** [D-013](decisions.md#d-013-hardware-output-defaults-to-a-null-implementation) —
   null-by-default is what makes everything downstream safe to develop and test.
 - **Dependencies.** 4.1.
-- **Acceptance.** Default config selects null; `RecordingDmxSender` captures frames
-  for assertions; no socket is opened anywhere in the test suite.
-- **Status.** Not started.
-- **Files.** new `backend/output/dmx_sender.py`.
+- **Acceptance.** Default (and only) transport is `NullTransport`; tests never open
+  a socket.
+- **Status.** **Done** — [`runtime/sender.py`](../backend/runtime/sender.py)
+  (`DmxTransport`, `NullTransport`, `SenderThread` send-on-change + keepalive).
+- **Files.** [`backend/runtime/sender.py`](../backend/runtime/sender.py),
+  [`backend/runtime/active.py`](../backend/runtime/active.py) (`publish()` / `dmx_dirty`).
 
 ### 4.3 Network configuration
 - **Goal.** Reshape `DMXConfig`: unicast/multicast, source name, per-universe
@@ -329,17 +344,39 @@ migratable through `REFERENCES` in [`records.py`](../backend/storage/records.py)
   ([fixture_and_transport_strategy.md](fixture_and_transport_strategy.md#6-the-custom-universe-box-boundary)).
 - **Files.** [`storage/config.py`](../backend/storage/config.py).
 
-### 4.4 Real sACN sender
-- **Goal.** Packet framing, sequence numbers, cadence, hybrid change/keepalive
-  transmission, socket lifecycle, blackout on shutdown.
-- **Why.** The last link between the universe buffer and the rig.
-- **Dependencies.** 4.2, 4.3. Requires a new production dependency (an sACN
-  library), so it needs explicit sign-off.
+### 4.4 Real sACN sender — **NEXT HARDWARE MILESTONE**
+
+- **Goal.** Put the existing wake loop on the wire: an `E131Transport` class
+  implementing `DmxTransport`, without changing `SenderThread`.
+- **Why.** The latency budget is already measured click → `NullTransport.send`; this
+  adds click → UDP `sendto` while keeping the same thread model
+  ([D-019](decisions.md#d-019-send-on-change--keepalive-cadence)).
+- **Dependencies.** 4.2 (done), 4.3 (blocked on box verification).
+- **Implementation plan:**
+  1. Add [`runtime/e131.py`](../backend/runtime/e131.py) — hand-rolled 638-byte DATA
+     packet builder, per-universe sequence counter, slot clamp 0–255
+     ([D-020](decisions.md#d-020-hand-rolled-e131-framing)).
+  2. Add `E131Transport` in [`runtime/sender.py`](../backend/runtime/sender.py) —
+     reads `DMXConfig` (host, port, universe, priority, source name); lazy UDP socket;
+     `send()` frames and `sendto`s; `close()` sends Stream_Terminated blackout then
+     closes; send failures log and never raise.
+  3. Wire transport selection in [`server/engine.py`](../backend/server/engine.py) —
+     default stays `NullTransport`; opt-in field on `DMXConfig` (e.g. `transport:
+     "e131"`) only after box sign-off.
+  4. Tests in `tests/test_e131.py` — assert packet bytes and sequence wrap; use an
+     injected fake socket; **no real UDP in CI**.
+  5. Manual integration — one activation against the physical box; record verified
+     settings back into [fixture_and_transport_strategy.md §6](fixture_and_transport_strategy.md#6-the-custom-universe-box-boundary).
 - **Acceptance.** Generated bytes asserted in tests without opening a socket;
   sequence numbers increment per universe and wrap; clean shutdown sends blackout
-  then closes; a send failure logs and retries without taking the show down.
-- **Status.** Blocked on 4.3.
-- **Files.** `backend/output/`.
+  then closes; a send failure logs and does not take the show down; p99 latency
+  budget still met with real transport enabled.
+- **Status.** **Not started** — blocked on 4.3 / universe-box verification.
+- **Files.** [`backend/runtime/e131.py`](../backend/runtime/e131.py) (new),
+  [`backend/runtime/sender.py`](../backend/runtime/sender.py),
+  [`backend/storage/config.py`](../backend/storage/config.py),
+  [`backend/server/engine.py`](../backend/server/engine.py),
+  `tests/test_e131.py` (new).
 
 ---
 
@@ -369,9 +406,9 @@ migratable through `REFERENCES` in [`records.py`](../backend/storage/records.py)
 - **Dependencies.** 5.1. Requires an HTTP client dependency.
 - **Acceptance.** Client + null client exist; scene sync can upsert names into
   `wled_presets`; nothing activates unless `ledfx.enabled` is true. Full
-  beat-thread isolation awaits a show loop (WS-3 parked).
-- **Status.** **Done for the adapter/sync slice** (`backend/ledfx/`). Not wired to
-  a Scene Controller. Live box test still pending.
+  beat-thread isolation is satisfied in the operator server via `AsyncCueOutput`.
+- **Status.** **Done** — adapter/sync in [`backend/ledfx/`](../backend/ledfx/);
+  show engine activates scenes on a WLED worker when `ledfx.enabled` is true.
 - **Files.** [`backend/ledfx/`](../backend/ledfx/);
   [`storage/config.py`](../backend/storage/config.py) (`WLEDConfig` → `LedfxConfig`).
 
@@ -585,14 +622,20 @@ Blocks WS-11 (frontend and HTTP server).
 
 ## WS-11 · Frontend and HTTP server
 
-> **Not started.** Depends on WS-10. Operator UI for scene *selection* and show
-> health may land earlier (roadmap phase 8); full *authoring* UI depends on WS-10.
+> **M1 landed (2026-08-13).** Entry point, control plane, latency harness, and a
+> no-build operator page exist. Full authoring UI (11.2) still depends on WS-10.
 
 ### 11.1 App entry point and process lifecycle
 - **Goal.** A runnable process: open `Library`, `configure_logging()`, wire
-  `SceneController` + beat source + outputs + optional LEDfx stack.
-- **Dependencies.** WS-3, WS-4/WS-5 as needed for hardware paths.
-- **Status.** Not started.
+  `SceneController` + outputs + optional LEDfx stack behind a show engine.
+- **Dependencies.** WS-3.
+- **Acceptance.** `python backend/main.py` serves on `0.0.0.0:8800`; WebSocket
+  `/ws/show` and REST `/api/show/*` drive the show thread; sender uses
+  `NullTransport`; latency ring buffer exposed at `/api/diag/latency`.
+- **Status.** **Done** — [`backend/main.py`](../backend/main.py),
+  [`backend/server/`](../backend/server/).
+- **Files.** [`backend/main.py`](../backend/main.py), [`backend/server/app.py`](../backend/server/app.py),
+  [`backend/server/engine.py`](../backend/server/engine.py).
 
 ### 11.2 Frontend application
 - **Goal.** `frontend/` client consuming WS-10.6/10.7: scene list, scene select,

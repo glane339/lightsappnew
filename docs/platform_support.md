@@ -245,7 +245,7 @@ components are wired into an entry point:
 
 | | Development | Production (basement) |
 | --- | --- | --- |
-| DMX sender | `NullDmxSender` (default) | Real sACN sender, opt-in via config |
+| DMX sender | `NullTransport` (the only implementation) | Real E1.31 sender, not in tree |
 | LEDfx client | Null or stub (default) | Real client against the LEDfx instance |
 | Audio | Scripted beat source | Live device |
 | Laser | Disabled, unimplemented | Disabled until [the prerequisites](laser_and_haze_safety.md#4-what-must-exist-before-output-is-enabled) are met |
@@ -260,7 +260,8 @@ Real output is always the opt-in — see
 
 - **Any laser output.** Not unsupported by omission — deliberately excluded.
 - **Multi-user or concurrent operators.** Single-operator by design.
-- **Remote or internet access.** LAN only; nothing listens on a socket.
+- **Remote or internet access.** The operator server binds `0.0.0.0:8800` on a
+  trusted LAN, with no auth. It does not open a DMX/E1.31 socket.
 - **Non-Windows deployment.** Not blocked by the code, but untested and not a target.
 - **Multi-universe DMX.** `DMX_Device.universe` is stored, but `Active_DMX_Channels` is
   still a single 512-value list and the runtime rejects any other universe.

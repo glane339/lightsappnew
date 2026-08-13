@@ -3,11 +3,14 @@
 > **Historical (2026-03).** The sections below document the architecture-review
 > session that created the initial `docs/` set at commit `691062e`.
 >
-> **Latest session (2026-08-10)** — docs only; no source changes. Resolved
-> `audit_findings.md` merge conflicts, refreshed docs for schema v4 and WS-3,
-> added WS-10/11 and roadmap phase 7a for future frontend/server authoring.
-> Pick up from [Future plans](current_sprint.md#future-plans) in
-> [current_sprint.md](current_sprint.md).
+> **Latest session (2026-08-13)** — operator server M1, symbolic DMX sender, and doc
+> refresh for current status. Source added under `backend/server/`, `backend/main.py`,
+> `frontend/index.html`, `backend/runtime/sender.py` (symbolic). **Next hardware work:**
+> universe-box verification, then WS-4.4 `E131Transport`. Pick up from
+> [Next steps](project_overview.md#next-steps-priority-order) in
+> [project_overview.md](project_overview.md).
+>
+> **Prior session (2026-08-10)** — docs only; schema v4 / WS-3 refresh.
 >
 > For day-to-day status see [project_overview.md](project_overview.md) and
 > [current_sprint.md](current_sprint.md).
@@ -63,7 +66,7 @@ Verified by search rather than assumed:
 | [wled_ledfx_architecture.md](wled_ledfx_architecture.md) | LEDfx ownership boundary, dedup, error handling, testing |
 | [laser_and_haze_safety.md](laser_and_haze_safety.md) | ILDA status, safety boundary, prerequisites before any output |
 | [audit_findings.md](audit_findings.md) | 21 findings with file/line evidence, plus 10 confirmed strengths |
-| [decisions.md](decisions.md) | 18 ADRs: 6 Accepted, 9 Proposed, 3 Open |
+| [decisions.md](decisions.md) | 20 ADRs; D-013/D-019 accepted for symbolic sender; D-020 proposed for E1.31 framing |
 | [current_sprint.md](current_sprint.md) | 8 workstreams with goals, dependencies, acceptance criteria, status |
 | [roadmap.md](roadmap.md) | 10 phases with scope, exit criteria, explicit non-goals, risks |
 | [platform_support.md](platform_support.md) | OS, Python, import root, data folder, network, implicit assumptions |

@@ -9,11 +9,12 @@ fail, while talking to LEDfx can, and a LEDfx failure must never take the show d
 from __future__ import annotations
 
 import logging
+import queue
 from typing import Protocol
 
 from ledfx.client import LedFxClientProtocol, LedFxError
 from models.Active_DMX_Channels import Active_DMX_Channels
-from runtime.active import active_dmx_channels, build_channels
+from runtime.active import active_dmx_channels, build_channels, publish
 
 logger = logging.getLogger(__name__)
 
@@ -37,9 +38,37 @@ class DmxOutput:
         # Built fully to the side, then assigned, so a sender never reads a buffer that
         # is half old look and half new.
         self._channels.channels = build_channels(self._library, preset_id)
+        publish()
 
     def blackout(self) -> None:
         self._channels.channels = [0] * len(self._channels.channels)
+        publish()
+
+
+class AsyncCueOutput:
+    """
+    Hands a cue to a worker thread instead of applying it.
+
+    Wraps any output whose ``apply`` can block — LEDfx over HTTP, in practice — so the
+    caller pays a queue put rather than a network round trip. Latest-wins: when the
+    queue is full the oldest pending cue is dropped, because a burst of beats only ever
+    needs to end on the newest look.
+    """
+
+    def __init__(self, work_queue: "queue.Queue[str]") -> None:
+        self._queue = work_queue
+
+    def apply(self, preset_id: str) -> None:
+        while True:
+            try:
+                self._queue.put_nowait(preset_id)
+                return
+            except queue.Full:
+                try:
+                    self._queue.get_nowait()
+                except queue.Empty:
+                    # A consumer drained it first; the retry will now succeed.
+                    pass
 
 
 class WledOutput:

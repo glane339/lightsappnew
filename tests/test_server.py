@@ -1,0 +1,212 @@
+from __future__ import annotations
+
+import time
+from pathlib import Path
+from typing import Optional
+
+import pytest
+from conftest import build_cycling_scene_graph
+from fastapi.testclient import TestClient
+
+from server.app import create_app
+from storage.config import AppConfig
+from storage.library import Library
+
+WAIT_S = 3.0
+
+
+def _seed_scene(data_root: Path) -> str:
+    """Write a playable scene to disk, so the app's own Library loads it on open."""
+    library = Library.open(data_root, sync_ilda=False)
+    graph = build_cycling_scene_graph(library, dmx_beats=2, wled_beats=3)
+    library.save()
+    return graph.scene_id
+
+
+def _client(data_root: Path) -> TestClient:
+    return TestClient(create_app(AppConfig(), data_root=data_root))
+
+
+def _wait_for_active(client: TestClient, scene_id: Optional[str]) -> bool:
+    deadline = time.monotonic() + WAIT_S
+    while time.monotonic() < deadline:
+        if client.get("/api/show/state").json()["active_scene_id"] == scene_id:
+            return True
+        time.sleep(0.005)
+    return False
+
+
+@pytest.fixture
+def client(data_root: Path):
+    with _client(data_root) as test_client:
+        yield test_client
+
+
+def test_health_is_ok(client: TestClient) -> None:
+    response = client.get("/api/health")
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
+
+
+def test_scene_list_is_empty_without_a_library(client: TestClient) -> None:
+    assert client.get("/api/scenes").json() == {"scenes": []}
+
+
+def test_scene_list_reports_stored_scenes(data_root: Path) -> None:
+    scene_id = _seed_scene(data_root)
+
+    with _client(data_root) as client:
+        scenes = client.get("/api/scenes").json()["scenes"]
+
+    assert [scene["id"] for scene in scenes] == [scene_id]
+    assert scenes[0]["sensitivity"] == 0.5
+
+
+def test_activating_over_rest_lights_the_rig(data_root: Path) -> None:
+    scene_id = _seed_scene(data_root)
+
+    with _client(data_root) as client:
+        response = client.post("/api/show/activate", json={"id": scene_id})
+        assert response.status_code == 200
+        assert response.json()["accepted"] is True
+
+        assert _wait_for_active(client, scene_id), "scene never became active"
+
+        status = client.get("/api/status").json()
+        assert status["is_active"] is True
+        assert status["sender"]["transport"] == "null"
+        assert status["sender"]["frames_sent"] >= 1
+        # A frame reaching the transport is what the ledger times.
+        assert status["latency"]["count"] >= 1
+
+
+def test_deactivate_stops_the_show(data_root: Path) -> None:
+    scene_id = _seed_scene(data_root)
+
+    with _client(data_root) as client:
+        client.post("/api/show/activate", json={"id": scene_id})
+        assert _wait_for_active(client, scene_id)
+
+        client.post("/api/show/deactivate")
+
+        assert _wait_for_active(client, None)
+        assert client.get("/api/show/state").json()["is_active"] is False
+
+
+def test_blackout_zeroes_the_universe_and_stops_sequencing(data_root: Path) -> None:
+    scene_id = _seed_scene(data_root)
+
+    with _client(data_root) as client:
+        client.post("/api/show/activate", json={"id": scene_id})
+        assert _wait_for_active(client, scene_id)
+
+        client.post("/api/show/blackout")
+        assert _wait_for_active(client, None)
+
+        engine = client.app.state.engine
+        assert engine.transport.last_channels is not None
+        assert set(engine.transport.last_channels) == {0}
+
+
+def test_activate_requires_a_scene_id(client: TestClient) -> None:
+    assert client.post("/api/show/activate", json={"id": ""}).status_code == 422
+
+
+def test_websocket_pushes_state_and_a_timed_ack(data_root: Path) -> None:
+    scene_id = _seed_scene(data_root)
+
+    with _client(data_root) as client, client.websocket_connect("/ws/show") as socket:
+        socket.send_json({"t": "activate", "id": scene_id, "ack": "probe-1"})
+
+        seen = _await_kinds(socket, {"state", "ack"})
+
+        assert seen["state"]["active_scene_id"] == scene_id
+        assert seen["ack"]["id"] == "probe-1"
+        # The whole point of the exercise: the round trip is inside the budget.
+        assert 0 <= seen["ack"]["latency_us"] <= 10_000
+
+
+def test_websocket_reports_an_unknown_scene_as_an_error(client: TestClient) -> None:
+    with client.websocket_connect("/ws/show") as socket:
+        socket.send_json({"t": "activate", "id": "no-such-scene"})
+
+        error = _await_kinds(socket, {"error"})["error"]
+
+        assert "no-such-scene" in error["message"]
+
+
+def test_websocket_rejects_malformed_frames(client: TestClient) -> None:
+    with client.websocket_connect("/ws/show") as socket:
+        socket.send_text("{not json")
+        assert socket.receive_json()["t"] == "error"
+
+        socket.send_json({"t": "fly-to-the-moon"})
+        assert "unknown message type" in socket.receive_json()["message"]
+
+
+def test_beat_advances_the_active_scene(data_root: Path) -> None:
+    scene_id = _seed_scene(data_root)
+
+    with _client(data_root) as client, client.websocket_connect("/ws/show") as socket:
+        socket.send_json({"t": "activate", "id": scene_id})
+        _await_kinds(socket, {"state", "ack"})
+        engine = client.app.state.engine
+        first_look = list(engine.transport.last_channels or [])
+
+        # The cue list advances every two beats, so two taps change the look.
+        socket.send_json({"t": "beat"})
+        socket.send_json({"t": "beat"})
+        _await_count(socket, "ack", 2)
+
+        assert engine.transport.last_channels != first_look
+
+
+def test_selftest_reports_percentiles_within_budget(data_root: Path) -> None:
+    scene_id = _seed_scene(data_root)
+
+    with _client(data_root) as client:
+        response = client.post(
+            "/api/diag/selftest",
+            json={"scene_id": scene_id, "count": 50, "gap_ms": 1.0},
+        )
+
+    body = response.json()
+    assert response.status_code == 200
+    assert body["measured"] == 50
+    assert body["latency"]["p99_us"] > 0
+    assert body["within_budget"] is True, f"p99 was {body['latency']['p99_us']} µs"
+
+
+def test_operator_page_is_served_at_the_root(client: TestClient) -> None:
+    response = client.get("/")
+
+    assert response.status_code == 200
+    assert "Lights" in response.text
+
+
+def _await_kinds(socket, kinds: set) -> dict:
+    """
+    Read frames until one of every requested kind has arrived, keyed by kind.
+
+    State and ack race each other — the ack is produced on the sender thread, the state
+    on the show thread — so tests match on kind rather than assuming an order.
+    """
+    seen: dict = {}
+    for _ in range(len(kinds) + 6):
+        message = socket.receive_json()
+        seen.setdefault(message["t"], message)
+        if kinds <= set(seen):
+            return seen
+    raise AssertionError(f"saw {sorted(seen)} while waiting for {sorted(kinds)}")
+
+
+def _await_count(socket, kind: str, count: int) -> list:
+    collected: list = []
+    for _ in range(count + 6):
+        message = socket.receive_json()
+        if message["t"] == kind:
+            collected.append(message)
+        if len(collected) >= count:
+            return collected
+    raise AssertionError(f"only saw {len(collected)} {kind} frames, wanted {count}")

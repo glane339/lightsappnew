@@ -12,9 +12,9 @@ How a scene runs. Companion to [architecture.md](architecture.md); terminology f
 > [`audio/beat_source.py`](../backend/audio/beat_source.py).
 >
 > What is still **Target**: real beat detection (the beat source is a protocol with a
-> manual implementation, no audio library chosen), the E1.31 sender that would put the
-> universe buffer on the wire, concurrency (§6), and any operator UI. Laser output is
-> severed from this path entirely — see
+> manual implementation, no audio library chosen), E1.31 packets that would put the
+> universe buffer on the wire (the sender today is `NullTransport`), and authoring
+> UI. Laser output is severed from this path entirely — see
 > [laser_and_haze_safety.md](laser_and_haze_safety.md).
 
 ---
@@ -204,18 +204,19 @@ nothing calls it yet. It must **not** happen on BPM change or on temporary beat 
 
 ## 6. Concurrency and race conditions
 
-**Current:** no threads exist. The sequencing core is synchronous — a beat source calls
-`SceneController.on_beat()` on whatever thread it likes, and nothing guards that. The
-universe buffer in [`runtime/active.py`](../backend/runtime/active.py) is still a module
-global. This is survivable only because nothing else runs yet; a real beat source with
-its own audio thread makes every hazard below live.
+**Current:** the operator server runs a show thread, a sender thread, and a WLED
+worker. The sender never blocks on I/O: it waits on `dmx_dirty` (or a keepalive
+timeout) and calls `NullTransport.send`. The universe buffer in
+[`runtime/active.py`](../backend/runtime/active.py) is still a module global; the
+whole-buffer swap in `DmxOutput.apply` is the torn-read mitigation. A real beat
+source with its own audio thread is still future work.
 
 **Target:** the design will have at least three concurrent activities:
 
 | Activity | Frequency | Touches |
 | --- | --- | --- |
 | Audio analysis | continuous (audio callback) | emits beat events |
-| E1.31 send loop | fixed cadence (~30–44 Hz) | reads universe buffers |
+| Sender loop | send-on-change + keepalive | reads universe buffers; later, E1.31 |
 | Operator UI | sporadic | activates scenes, edits the library |
 
 The hazards:
@@ -236,14 +237,13 @@ The hazards:
    activation. `force=True` deletes can still take a Scene down with a required parent
    ([AF-H04](audit_findings.md#af-h04)), though optional references such as
    `ilda_frame_list_id` are now detached instead.
-4. **LEDfx HTTP latency.** Still unmitigated: `WledOutput.apply` calls LEDfx
-   synchronously on whatever thread handled the beat. A hung LEDfx will stall beat
-   handling, and with it DMX. The timeout (`request_timeout_s`, default 2s) bounds the
-   damage but does not remove it. An API call must never run on the beat-handling
-   thread; moving it off is outstanding work.
+4. **LEDfx HTTP latency.** Mitigated on the show thread: `AsyncCueOutput` enqueues
+   the cue and a worker makes the blocking call. A hung LEDfx still costs the
+   strips, not the DMX path.
 
-The single most useful concurrency rule: **the E1.31 sender must never block on
-anything except its own timer.**
+The single most useful concurrency rule: **the sender must never block on anything
+except its own wait** — today that is `NullTransport`; later it is a non-blocking
+UDP `sendto`.
 
 ---
 

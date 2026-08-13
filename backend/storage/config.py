@@ -20,9 +20,10 @@ class DMXConfig(BaseModel):
     """
     E1.31 (sACN) output settings, carried over from the previous app's config.
 
-    No transport reads these yet. The universe numbering starts at 1 to match
-    ``DMX_Device.universe`` and E1.31 itself, where 0 is not a valid universe. Slot
-    count is not configurable — it is ``UNIVERSE_SIZE``, fixed by the protocol.
+    No transport reads these yet — the live sender is ``NullTransport``. The universe
+    numbering starts at 1 to match ``DMX_Device.universe`` and E1.31 itself, where 0
+    is not a valid universe. Slot count is not configurable — it is ``UNIVERSE_SIZE``,
+    fixed by the protocol.
     """
 
     universe: int = Field(default=1, ge=1, le=63999)
@@ -57,10 +58,24 @@ class UIConfig(BaseModel):
     last_scene_id: Optional[str] = None
 
 
+class ServerConfig(BaseModel):
+    """
+    Bind address for the operator server.
+
+    ``0.0.0.0`` exposes the app to the LAN, which is the point — the operator drives it
+    from a phone or tablet. There is no auth, so the port stands on the LAN being
+    trusted. 8800 avoids LEDfx on 8888 and the commonly-taken 8000/8080.
+    """
+
+    host: str = "0.0.0.0"
+    port: int = Field(default=8800, ge=1, le=65535)
+
+
 class AppConfig(BaseModel):
     """Every field carries a default, so a config file missing keys still loads."""
 
     schema_version: int = SCHEMA_VERSION
+    server: ServerConfig = Field(default_factory=ServerConfig)
     dmx: DMXConfig = Field(default_factory=DMXConfig)
     ledfx: LedfxConfig = Field(default_factory=LedfxConfig)
     ilda: ILDAConfig = Field(default_factory=ILDAConfig)

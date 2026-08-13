@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 from typing import Dict, List
 
 from models.Active_DMX_Channels import UNIVERSE_SIZE, Active_DMX_Channels
@@ -21,6 +22,25 @@ SUPPORTED_UNIVERSE = 1
 # sees the latest values. ILDA has no equivalent: the laser path is parked, so nothing
 # here resolves frames — see docs/laser_and_haze_safety.md.
 active_dmx_channels = Active_DMX_Channels()
+
+# The send-on-change seam. A sender waiting on this leaves within microseconds of a look
+# changing, instead of waiting out a fixed tick — see docs/server_plan/.
+dmx_dirty = threading.Event()
+
+# Counts frames handed to the sender. Callers use it to tell whether an operation
+# actually changed the universe, since a beat that lands mid-cue changes nothing.
+_publish_count = 0
+
+
+def publish() -> None:
+    """Announce that ``active_dmx_channels`` holds a new frame."""
+    global _publish_count
+    _publish_count += 1
+    dmx_dirty.set()
+
+
+def publish_count() -> int:
+    return _publish_count
 
 
 def build_channels(library, dmx_preset_id: str) -> List[int]:
