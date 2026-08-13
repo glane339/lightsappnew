@@ -7019,3 +7019,27 @@
 2026-08-13 00:31:38 INFO [runtime.scene_controller] activated scene 'full-chase': 3 dmx cues at 1 beats, 2 wled cues at 4 beats
 2026-08-13 00:31:38 INFO [runtime.scene_controller] activated scene 'full-chase': 3 dmx cues at 1 beats, 2 wled cues at 4 beats
 2026-08-13 00:31:38 INFO [runtime.scene_controller] activated scene 'full-chase': 3 dmx cues at 1 beats, 2 wled cues at 4 beats
+2026-08-13 00:45:26 INFO [runtime.scene_controller] activated scene 'full-chase': 3 dmx cues at 1 beats, 2 wled cues at 4 beats
+2026-08-13 00:45:27 INFO [runtime.scene_controller] deactivated scene 'full-chase'
+2026-08-13 00:45:28 INFO [runtime.scene_controller] activated scene 'static-warm': 1 dmx cues at 8 beats, 2 wled cues at 4 beats
+2026-08-13 00:45:30 INFO [runtime.scene_controller] deactivated scene 'static-warm'
+2026-08-13 00:45:32 INFO [runtime.scene_controller] activated scene 'dim-pulse': 2 dmx cues at 2 beats, 2 wled cues at 4 beats
+2026-08-13 00:45:33 INFO [runtime.scene_controller] activated scene 'full-chase': 3 dmx cues at 1 beats, 2 wled cues at 4 beats
+2026-08-13 00:45:35 INFO [runtime.scene_controller] activated scene 'static-warm': 1 dmx cues at 8 beats, 2 wled cues at 4 beats
+2026-08-13 00:48:00 INFO [server.tuning] latency tuning applied: switchinterval=0.0010s, gc thresholds=(2000, 50, 50)
+2026-08-13 00:48:01 INFO [__main__] serving on http://0.0.0.0:8800 (ws at /ws/show)
+2026-08-13 00:48:01 INFO [server.engine] LEDfx scene sync started (http://127.0.0.1:8888, every 25s)
+2026-08-13 00:48:01 INFO [server.app] show engine started
+2026-08-13 00:48:01 INFO [httpx] HTTP Request: GET http://127.0.0.1:8888/api/scenes "HTTP/1.1 200 OK"
+2026-08-13 00:48:26 INFO [httpx] HTTP Request: GET http://127.0.0.1:8888/api/scenes "HTTP/1.1 200 OK"
+2026-08-13 00:48:51 INFO [httpx] HTTP Request: GET http://127.0.0.1:8888/api/scenes "HTTP/1.1 200 OK"
+2026-08-13 00:49:16 INFO [httpx] HTTP Request: GET http://127.0.0.1:8888/api/scenes "HTTP/1.1 200 OK"
+2026-08-13 00:49:41 INFO [httpx] HTTP Request: GET http://127.0.0.1:8888/api/scenes "HTTP/1.1 200 OK"
+2026-08-13 00:50:06 INFO [httpx] HTTP Request: GET http://127.0.0.1:8888/api/scenes "HTTP/1.1 200 OK"
+2026-08-13 00:50:31 INFO [httpx] HTTP Request: GET http://127.0.0.1:8888/api/scenes "HTTP/1.1 200 OK"
+2026-08-13 00:50:56 INFO [httpx] HTTP Request: GET http://127.0.0.1:8888/api/scenes "HTTP/1.1 200 OK"
+2026-08-13 00:51:38 INFO [server.tuning] latency tuning applied: switchinterval=0.0010s, gc thresholds=(2000, 50, 50)
+2026-08-13 00:51:38 INFO [__main__] serving on http://0.0.0.0:8800 (ws at /ws/show)
+2026-08-13 00:51:38 INFO [server.engine] LEDfx scene sync started (http://127.0.0.1:8888, every 25s)
+2026-08-13 00:51:38 INFO [server.app] show engine started
+2026-08-13 00:51:38 INFO [httpx] HTTP Request: GET http://127.0.0.1:8888/api/scenes "HTTP/1.1 200 OK"
