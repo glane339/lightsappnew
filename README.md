@@ -5,7 +5,11 @@ Show-control application for a lighting rig: DMX over E1.31, WLED via LEDfx, and
 
 **Current state:** persistence layer, beat-driven show-control core, operator HTTP
 server, and a symbolic DMX sender (`NullTransport` — no packets leave the machine).
-Real audio capture and E1.31 network output are not implemented. See
+Real audio capture and E1.31 network output are not implemented. The server/runtime
+layer was independently audited at `acc52a7`
+([Audit v3](docs/audit_findings.md#audit-v3--operator-server--runtime)):
+**READY WITH MINOR FIXES**; universe-box verification, then real E1.31 transport,
+remain the next milestones. Nothing is hardware-proven. See
 [docs/project_overview.md](docs/project_overview.md).
 
 ## Structure
@@ -33,10 +37,13 @@ A `frontend/` directory holds the M1 operator page. The full UI is still WS-11.
 Requires Python 3.12+.
 
 ```powershell
-py -3.12 -m venv venv
-.\venv\Scripts\Activate.ps1
+py -3.12 -m venv .venv
+.\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 ```
+
+(The working environment in this repository lives at `.venv/`; both `venv/` and
+`.venv/` are gitignored.)
 
 Imports are absolute from `backend/` (no package `__init__.py`). pytest sets
 `pythonpath = backend` via `pytest.ini`.
@@ -44,7 +51,7 @@ Imports are absolute from `backend/` (no package `__init__.py`). pytest sets
 ## Tests
 
 ```powershell
-.\venv\Scripts\python.exe -m pytest
+.\.venv\Scripts\python.exe -m pytest
 ```
 
 Tests inject a temporary data root and never touch `%LOCALAPPDATA%\LightsApp`.

@@ -16,6 +16,16 @@ Longer horizon in [roadmap.md](roadmap.md).
 > [project_overview.md](project_overview.md#next-steps-priority-order)). Symbolic
 > sender is done; **actual E1.31 transport (WS-4.4) is the next hardware milestone**
 > after universe-box verification.
+>
+> **Server/runtime audit completed 2026-08-13** at `acc52a7`
+> ([Audit v3](audit_findings.md#audit-v3--operator-server--runtime)). Verdict:
+> **READY WITH MINOR FIXES** — no blocker to *beginning* E1.31, with four
+> recommended fixes folded into the WS-4.4 window
+> ([F-01](audit_findings.md#f-01) ack-ledger pairing,
+> [F-02](audit_findings.md#f-02) sender exception guard,
+> [F-04](audit_findings.md#f-04) stop-script hardening,
+> [F-05](audit_findings.md#f-05) blackout-on-shutdown). None are implemented yet.
+> The milestone order below is unchanged — the audit confirmed it.
 
 ### Landed (no action needed)
 
@@ -33,6 +43,7 @@ Longer horizon in [roadmap.md](roadmap.md).
 | WLED off show thread (`AsyncCueOutput` + worker) | Done (WS-5 wiring in engine) |
 | 116-test suite | Done |
 | Audit v2 merge + post-audit doc refresh | Done |
+| Server/runtime audit v3 at `acc52a7` — READY WITH MINOR FIXES ([findings F-01…F-15](audit_findings.md#findings-summary)) | Done (fixes **not** implemented) |
 
 ### Build next (dependency order)
 
@@ -348,10 +359,19 @@ migratable through `REFERENCES` in [`records.py`](../backend/storage/records.py)
 
 - **Goal.** Put the existing wake loop on the wire: an `E131Transport` class
   implementing `DmxTransport`, without changing `SenderThread`.
-- **Why.** The latency budget is already measured click → `NullTransport.send`; this
-  adds click → UDP `sendto` while keeping the same thread model
+- **Why.** The latency budget is already measured server-receive → `NullTransport.send`
+  (software path only); this adds the UDP `sendto` while keeping the same thread model
   ([D-019](decisions.md#d-019-send-on-change--keepalive-cadence)).
 - **Dependencies.** 4.2 (done), 4.3 (blocked on box verification).
+- **Audit v3 items to fold in (none implemented yet):**
+  [F-01](audit_findings.md#f-01) — fix the ack/latency-ledger pairing *before* the
+  ledger is used as acceptance evidence; [F-02](audit_findings.md#f-02) — exception
+  guard in `SenderThread._run`; [F-05](audit_findings.md#f-05) — the close-time
+  blackout below plus an explicit engine-level blackout in `stop()`, with a
+  zeros-then-close test; [F-04](audit_findings.md#f-04) — harden `stop-server.ps1`
+  before hardware output is enabled; [F-10](audit_findings.md#f-10) — gate
+  `/api/diag/selftest` behind transport==null; [F-15](audit_findings.md#f-15) —
+  settle the 120 Hz keepalive against the box (with 4.3).
 - **Implementation plan:**
   1. Add [`runtime/e131.py`](../backend/runtime/e131.py) — hand-rolled 638-byte DATA
      packet builder, per-universe sequence counter, slot clamp 0–255
