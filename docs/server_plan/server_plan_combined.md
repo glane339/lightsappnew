@@ -66,7 +66,7 @@ flowchart LR
 - **Send-on-change seam lands in the active classes** (`backend/runtime/active.py`): a module-level `threading.Event` plus a `publish()` helper, with `DmxOutput.apply` routing through it. The universe buffer is already swapped whole rather than mutated in place (`backend/runtime/outputs.py:36-39`), so a reader that grabs one reference can never see a torn frame.
 - **`SenderThread`** does `dirty.wait(timeout=keepalive)`: wakes immediately on change, and re-sends periodically when idle so receivers don't time out (cadence per `docs/fixture_and_transport_strategy.md` §7).
 - **`DmxTransport` interface**, whose only implementation is `NullTransport`. Real E1.31 is not in the tree — it drops in later as one class, reading the existing `DMXConfig` (universe, host, port 5568, priority — currently unread by any transport).
-- Hardware validation stays **gated on universe-box verification** (D-017, transport doc §6).
+- Hardware validation stays **gated on finishing wire verification** (unicast/multicast; D-017, transport doc §6). **Universe 1**, single universe, network-switch destination, and **blackout on packet stop** are recorded.
 
 ## 5. WLED path (best-effort)
 
@@ -156,7 +156,7 @@ Verified against the repo — note that `backend/routes/` and `backend/sender/` 
 ## 12. Milestones
 
 - **M1 — server skeleton + control plane + instrumentation (null sender).** App factory, lifespan, ShowThread + command queue, `WS /ws/show` + REST control mirrors, minimal operator page, latency ring buffer, `NullTransport`. The ≤ 10 ms acceptance is measured here (click → publish → null-send).
-- **M2 — E1.31 sender.** Parked. Framing, sockets, and packet tests are not in the tree; the wake loop already lives in M1's `SenderThread`. Lands only after the universe box is verified (D-017).
+- **M2 — E1.31 sender.** Parked. Framing, sockets, and packet tests are not in the tree; the wake loop already lives in M1's `SenderThread`. Lands after wire verification completes (universe **1** and switch IP recorded; unicast/multicast open — D-017, transport doc §6).
 - **M3 — LEDfx dispatcher wiring.** `AsyncCueOutput` + `WledThread` with latest-wins coalescing; AF2-H01 single-writer fix confirmed.
 - **M4 — authoring API.** CRUD for the ten collections via the WS-10.5 authoring service, plus config endpoints (WS-10.6).
 
@@ -166,7 +166,7 @@ Verified against the repo — note that `backend/routes/` and `backend/sender/` 
 
 - Phase 7a's "no WebSocket yet" non-goal is **overridden** by the latency requirement.
 - Parked WS-4's *symbolic* sender (null transport + send-on-change thread) landed with M1. Packet framing did not.
-- E1.31 transport stays `NullTransport` until the DMX universe box is verified (D-017, transport doc §6).
+- E1.31 transport stays `NullTransport` until wire verification completes (D-017, transport doc §6). Universe **1**, single universe, switch destination in local config are recorded.
 - The 15 ms hardware allowance is an assumption, not a measurement.
 
 ---

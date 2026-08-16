@@ -239,7 +239,7 @@ This replaced positional derivation, where a device's address was the sum of the
 | The same fixture was a different row in every look, with no shared key | One `DMX_Device` per fixture, referenced by every look |
 | The patch was implicitly restated in every look | Stored once, checkable against what is dialled into the fixtures |
 | Changing one `channel_count` silently re-addressed every later device, in that look only | Addresses are independent; a channel-count change affects one device |
-| Address gaps were inexpressible; devices had to be contiguous | Gaps are ordinary — the rig has one at channel 24 |
+| Address gaps were inexpressible; devices had to be contiguous | Gaps are ordinary, whether or not the current patch has one |
 | Two devices overlapping silently overwrote each other | Overlap raises `StorageError` naming both devices and the channel |
 
 Still open: **one universe.** `Active_DMX_Channels` is a single 512-value list, and a
@@ -555,4 +555,5 @@ Rules for moving from Current to Target without a rewrite:
    in a JSON collection.
 6. **One sequencer.** Resist adding beat logic to either output controller.
 7. **The universe box is opaque.** Do not encode assumptions about its internals;
-   configure it as an IP address and a universe number.
+   configure it as the network switch IP (local `config.json`) and universe **1**
+   ([fixture_and_transport_strategy.md §6](fixture_and_transport_strategy.md#6-the-custom-universe-box-boundary)).

@@ -23,7 +23,7 @@ from ledfx.service import build_ledfx_stack
 from runtime.active import publish_count
 from runtime.outputs import AsyncCueOutput, DmxOutput, WledOutput
 from runtime.scene_controller import SceneController
-from runtime.sender import DmxTransport, NullTransport, SenderThread
+from runtime.sender import DmxTransport, SenderThread, build_transport
 from server.commands import CommandKind, ShowCommand, ShowEvent, ShowState
 from server.latency import LatencyTracker
 from storage.config import AppConfig
@@ -84,7 +84,7 @@ class ShowEngine:
         self._wled_cues: "queue.Queue[str]" = queue.Queue(maxsize=WLED_QUEUE_MAX)
         self._latency = LatencyTracker()
 
-        self._transport = transport if transport is not None else NullTransport()
+        self._transport = transport if transport is not None else build_transport(config.dmx)
         self._ledfx_client, self._ledfx_sync = build_ledfx_stack(library, config.ledfx)
 
         self._dmx_output = DmxOutput(library)
@@ -179,8 +179,24 @@ class ShowEngine:
         self._show_thread = None
         self._wled_thread = None
 
+        self._blackout_before_close()
         self._transport.close()
         self._ledfx_client.close()
+
+    def _blackout_before_close(self) -> None:
+        """
+        Put zeros on the wire while the socket is still open (D-011).
+
+        Sent from this thread rather than published, because the sender is already
+        stopped by the time shutdown gets here. The transport repeats the blackout in
+        ``close()``; doing it here as well means the rig goes dark even if a transport
+        skips that step.
+        """
+        try:
+            self._dmx_output.blackout()
+            self._transport.send(self._dmx_output.channels.channels)
+        except Exception:  # pragma: no cover - shutdown must not raise
+            logger.exception("could not blackout before closing the transport")
 
     def submit(self, command: ShowCommand) -> None:
         """
@@ -202,10 +218,13 @@ class ShowEngine:
         )
 
     def sender_health(self) -> Dict[str, Any]:
+        destination = getattr(self._transport, "destination", None)
         return {
             "running": self._sender.running,
             "transport": getattr(self._transport, "name", type(self._transport).__name__),
             "frames_sent": getattr(self._transport, "send_count", None),
+            "destination": f"{destination[0]}:{destination[1]}" if destination else None,
+            "send_failures": getattr(self._transport, "failure_count", None),
         }
 
     def _run_show(self) -> None:

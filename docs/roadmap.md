@@ -130,18 +130,25 @@ interface with null/real implementations; a network configuration that can
 actually describe an sACN destination; the real sender with sequence numbers, hybrid
 change-plus-keepalive cadence, and blackout on shutdown.
 
-**Progress (2026-08-13).** WS-4.2 done: `DmxTransport`, `NullTransport`,
-`SenderThread`, and `publish()`/`dmx_dirty` in the operator server. WS-4.4 (real
-packets) not started — blocked on universe-box verification (WS-4.3, D-017).
+**Progress (2026-08-16).** WS-4.2 and WS-4.4 done in code: `DmxTransport`,
+`NullTransport`, `SenderThread`, `publish()`/`dmx_dirty`, plus
+[`runtime/e131.py`](../backend/runtime/e131.py) framing and `E131Transport` (unicast
+or multicast, blackout and Stream_Terminated on close). Rig addressing partially
+verified: **universe 1**, single universe, network switch destination, and blackout
+on packet stop
+([fixture_and_transport_strategy.md §6](fixture_and_transport_strategy.md#6-the-custom-universe-box-boundary)).
+Outstanding: unicast vs multicast confirmation (D-017) and one activation against the
+physical box. Multi-universe buffers remain out of scope for a one-universe rig.
 
 **Audit (2026-08-13).** The server/runtime layer was independently audited at
 `acc52a7` ([Audit v3](audit_findings.md#audit-v3--operator-server--runtime)):
 **READY WITH MINOR FIXES** — the `DmxTransport` seam is sound, no blocker to
 beginning this phase, and the phase order (box verification → E1.31 → real
-beats → authoring → frontend) is confirmed. Recommended fixes F-01/F-02/F-04/F-05
-fold into this phase's window and are **not yet implemented**. The existing
-latency evidence is a software path ending at `NullTransport.send` — not
-hardware-proven; the p99 budget must be re-proven with the real transport.
+beats → authoring → frontend) is confirmed. F-02, F-05, F-10, and F-15 were closed
+with the transport; F-01 (ack-ledger pairing) and F-04 (stop-script hardening,
+partly addressed by `stop-server.cmd`) remain open. The existing latency evidence is
+a software path ending at `NullTransport.send` — not hardware-proven; the p99 budget
+must be re-proven with the real transport.
 
 **Exit criteria.**
 - Packet bytes are asserted in tests without opening a socket.
@@ -150,16 +157,18 @@ hardware-proven; the p99 budget must be re-proven with the real transport.
 - A destination-unreachable condition logs, retries, and never takes the show down.
 - Clean shutdown sends a blackout frame before closing.
 - Real output is opt-in; null is the default.
-- **Verified against the physical universe box:** universe numbering, unicast vs
-  multicast, and behaviour when packets stop.
+- **Verified against the physical universe box:** universe **1** (single universe),
+  switch destination, and **blackout on packet stop** recorded; unicast vs multicast
+  still to measure.
 
 **Non-goals.** No Art-Net. No DMX input or merging. No multi-source priority
 arbitration beyond a configurable default. No RDM.
 
 **Risks.**
-- The universe box is undocumented ([fixture_and_transport_strategy.md](fixture_and_transport_strategy.md#6-the-custom-universe-box-boundary)).
-  Its expectations must be measured, not assumed — this is the main source of
-  schedule risk in the whole roadmap.
+- Universe **1** and switch destination are documented
+  ([fixture_and_transport_strategy.md §6](fixture_and_transport_strategy.md#6-the-custom-universe-box-boundary)),
+  but unicast/multicast is still unknown — schedule risk until the wire test
+  completes. Packet-stop behaviour is confirmed: **blackout**.
 - First production network dependency; needs explicit sign-off.
 - The sender must never block on anything but its own timer, or DMX output stutters
   when LEDfx or audio misbehaves.
@@ -239,8 +248,9 @@ that the room actually uses.
 - The configured patch matches the fixtures' physical DIP switches, verified fixture
   by fixture.
 - Every fixture responds correctly to a manually applied look.
-- The universe box's IP, universe, and transport mode are configured and confirmed
-  working.
+- The universe box's switch IP, universe **1**, and transport mode are configured in
+  local `config.json` and confirmed working on the wire (unicast/multicast still
+  open; packet-stop **blackout** confirmed).
 - No IPs, hostnames, or MAC addresses appear anywhere in the repository — they live
   in the user's `config.json`, outside git
   ([`paths.py:26-32`](../backend/storage/paths.py#L26-L32)).

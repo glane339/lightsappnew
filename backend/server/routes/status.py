@@ -20,6 +20,8 @@ class SenderHealth(BaseModel):
     running: bool
     transport: str
     frames_sent: Optional[int]
+    destination: Optional[str] = None
+    send_failures: Optional[int] = None
 
 
 class LedfxHealth(BaseModel):

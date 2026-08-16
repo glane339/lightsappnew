@@ -3,3 +3,6 @@ __pycache__/
 *.pyc
 .venv/
 .vscode/
+
+# Real rig config: holds the universe box address, so it must never be committed.
+.localdata/

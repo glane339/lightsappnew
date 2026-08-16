@@ -67,7 +67,20 @@ def selftest(body: SelfTestRequest, engine: EngineDep) -> SelfTestResponse:
 
     Runs in FastAPI's threadpool rather than on the event loop, so the sleeps between
     activations do not stall the server being measured.
+
+    Refused against a live transport: thousands of activations would strobe the rig and
+    wipe the operational latency window mid-show.
     """
+    transport = engine.sender_health()["transport"]
+    if transport != "null":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"self-test refuses to run against the {transport!r} transport; "
+                "set dmx.transport to 'null' to measure the software path"
+            ),
+        )
+
     engine.latency.clear()
     gap_s = body.gap_ms / 1000.0
 

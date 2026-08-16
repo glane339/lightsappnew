@@ -176,12 +176,12 @@ backport with no purpose here — see [AF-L02](audit_findings.md#af-l02).
 
 | Blocker | Blocks | Notes |
 | --- | --- | --- |
-| DMX universe box behaviour unverified | E1.31 transport (WS-4.3, WS-4.4) | Universe numbering, unicast vs. multicast, and what it does when packets stop are all unknown. No documentation exists in the repository. **Must be measured, not assumed.** |
+| DMX universe box — partial | E1.31 transport (WS-4.3, WS-4.4) | **Universe 1**, single universe, network-switch destination (IP in local `config.json`), and **blackout on packet stop** are recorded ([§6](fixture_and_transport_strategy.md#6-the-custom-universe-box-boundary)). Unicast vs multicast still **must be measured on the wire**. |
 | LEDfx preset identifier form unknown | The WLED schema change (WS-2.3) | Which LEDfx entity, what identifier form, and whether it is stable across restarts. [D-018](decisions.md#d-018-ledfx-preset-identifier-form) |
 | Sensitivity semantics undefined | Any audio work | Range, direction, and the relationship to `AudioConfig.default_sensitivity`. [AF-M02](audit_findings.md#af-m02) |
 | Audio event delivery undecided | Threading design | Callback vs. queue. [D-016](decisions.md#d-016-audio-event-delivery-mechanism) |
 | No Python 3.12 or venv locally | Running anything | `python --version` → 3.11.9; `py -3.12` not found; no `venv/`. The code needs only 3.9+. [AF-D03](audit_findings.md#af-d03) |
-| New dependencies needed | WS-4.4, WS-5.2, WS-6.1 | sACN library, HTTP client, pytest. None added this session. |
+| New dependencies needed | WS-5.2, WS-6.1 | HTTP client, pytest. E1.31 is hand-rolled, so no sACN library is needed ([D-020](decisions.md#d-020-hand-rolled-e131-framing)). |
 
 ---
 

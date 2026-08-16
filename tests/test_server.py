@@ -2,17 +2,39 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
-from typing import Optional
+from typing import Callable, List, Optional
 
 import pytest
 from conftest import build_cycling_scene_graph
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from server.app import create_app
+from server.commands import CommandKind, ShowCommand
+from server.engine import ShowEngine
+from server.routes.diag import SelfTestRequest, selftest
 from storage.config import AppConfig
 from storage.library import Library
 
 WAIT_S = 3.0
+
+
+class RecordingTransport:
+    """Keeps every frame, and remembers how many had arrived when it was closed."""
+
+    def __init__(self) -> None:
+        self.frames: List[List[int]] = []
+        self.closed_after: Optional[int] = None
+
+    @property
+    def name(self) -> str:
+        return "recording"
+
+    def send(self, channels: List[int]) -> None:
+        self.frames.append(list(channels))
+
+    def close(self) -> None:
+        self.closed_after = len(self.frames)
 
 
 def _seed_scene(data_root: Path) -> str:
@@ -25,6 +47,15 @@ def _seed_scene(data_root: Path) -> str:
 
 def _client(data_root: Path) -> TestClient:
     return TestClient(create_app(AppConfig(), data_root=data_root))
+
+
+def _wait_until(predicate: Callable[[], bool]) -> bool:
+    deadline = time.monotonic() + WAIT_S
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(0.005)
+    return False
 
 
 def _wait_for_active(client: TestClient, scene_id: Optional[str]) -> bool:
@@ -176,6 +207,42 @@ def test_selftest_reports_percentiles_within_budget(data_root: Path) -> None:
     assert body["measured"] == 50
     assert body["latency"]["p99_us"] > 0
     assert body["within_budget"] is True, f"p99 was {body['latency']['p99_us']} µs"
+
+
+def test_selftest_refuses_to_run_against_a_live_transport() -> None:
+    class LiveTransportEngine:
+        def sender_health(self) -> dict:
+            return {"transport": "e131"}
+
+    with pytest.raises(HTTPException) as raised:
+        selftest(SelfTestRequest(scene_id="any-scene"), LiveTransportEngine())
+
+    assert raised.value.status_code == 409
+    assert "e131" in raised.value.detail
+
+
+def test_shutdown_blacks_out_before_closing_the_transport(data_root: Path) -> None:
+    scene_id = _seed_scene(data_root)
+    transport = RecordingTransport()
+    engine = ShowEngine(
+        Library.open(data_root, sync_ilda=False), AppConfig(), transport=transport
+    )
+
+    engine.start()
+    try:
+        engine.submit(
+            ShowCommand(
+                kind=CommandKind.ACTIVATE,
+                received_ns=time.perf_counter_ns(),
+                scene_id=scene_id,
+            )
+        )
+        assert _wait_until(lambda: any(set(frame) != {0} for frame in transport.frames))
+    finally:
+        engine.stop()
+
+    assert set(transport.frames[-1]) == {0}, "the rig was left lit at shutdown"
+    assert transport.closed_after == len(transport.frames), "closed before the blackout"
 
 
 def test_operator_page_is_served_at_the_root(client: TestClient) -> None:

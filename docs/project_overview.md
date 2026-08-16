@@ -38,7 +38,9 @@ The server/runtime layer was **independently audited at `acc52a7`**
 ([Audit v3](audit_findings.md#audit-v3--operator-server--runtime), 2026-08-13):
 verdict **READY WITH MINOR FIXES** — no blocker to *beginning* E1.31, with
 recommended fixes (F-01/F-02/F-04/F-05, none yet implemented) folded into the
-WS-4.4 window. Universe-box verification remains next, then real E1.31 transport.
+WS-4.4 window. Universe **1**, single universe, and switch destination are
+documented; unicast/multicast remains to verify on the wire. Packet-stop behaviour
+verified: **blackout**.
 Nothing is hardware-proven; the latency evidence is software-path only.
 
 | Layer | Status | Evidence |
@@ -131,18 +133,22 @@ What the code actually does today:
 
 Ranked by how much they block a working system:
 
-1. **One universe only.** `DMX_Device.universe` is persisted but
-   [`runtime/active.py`](../backend/runtime/active.py) buffers a single universe and
-   raises for anything else. Multi-universe needs per-universe buffers. See
-   [fixture_and_transport_strategy.md](fixture_and_transport_strategy.md).
+1. **One universe only — universe 1.** The rig runs a single sACN universe
+   (number **1**). E1.31 is sent to the **network switch** (static IP from the switch
+   manual, set as `dmx.host` in local `config.json` only). `DMX_Device.universe` is
+   persisted but [`runtime/active.py`](../backend/runtime/active.py) buffers one
+   universe and raises for anything else. See
+   [fixture_and_transport_strategy.md §6](fixture_and_transport_strategy.md#6-the-custom-universe-box-boundary).
 2. **Per-entry beat duration is still absent.** Both cue lists carry one `beats`
    scalar for the whole list (schema v4); the sequencers are built and tested against
    that shape. Variable hold times per cue entry remain future work
    ([AF-H02](audit_findings.md#af-h02)).
 3. **No real beat detection** — beats are manual (operator page / REST) or scripted
    in tests; nothing reads live audio.
-4. **No E1.31 packets on the wire.** The wake path is live; only `NullTransport` is
-   installed. Real framing and UDP are the next hardware milestone (WS-4.4).
+4. **E1.31 is written but unproven.** [`runtime/e131.py`](../backend/runtime/e131.py)
+   and `E131Transport` frame and send real packets, verified over loopback and by
+   byte-level tests. `dmx.transport` defaults to `"null"`, so nothing transmits until
+   it is opted in, and no frame has reached the physical rig yet.
 5. **No authoring layer for UI/server.** `Library.add()` is collection-granular;
    there are no typed helpers or HTTP routes for creating scenes, lighting presets,
    or cue lists ([WS-10](current_sprint.md#ws-10--show-authoring-frameworks)).
@@ -157,8 +163,10 @@ responsible for:
 
 - Rendering WLED pixels — LEDfx owns that. The app selects LEDfx presets.
 - DMX512 electrical signalling — a custom DMX universe box receives E1.31 over
-  Ethernet and drives the physical bus. Its internals are not described anywhere
-  in this repository and are treated as an opaque boundary.
+  Ethernet (via the network switch) and drives the physical bus. Its internals are
+  not described in this repository; see
+  [fixture_and_transport_strategy.md §6](fixture_and_transport_strategy.md#6-the-custom-universe-box-boundary)
+  for verified addressing (universe 1, switch IP in local config).
 - Parsing or rendering ILDA content — `.ild` files are stored byte-for-byte and
   never inspected ([`ilda_blobs.py:62-66`](../backend/storage/ilda_blobs.py#L62-L66)).
 
@@ -210,16 +218,17 @@ background worker when enabled. Nothing leaves the machine as E1.31.
 
 ## Next steps (priority order)
 
-1. **Verify the universe box** — measure universe number, unicast vs multicast, and
-   hold-vs-blackout when packets stop ([D-017](decisions.md#d-017-sacn-unicast-versus-multicast),
-   [fixture_and_transport_strategy.md §6](fixture_and_transport_strategy.md#6-the-custom-universe-box-boundary)).
-   This unblocks WS-4.3 and real output.
-2. **Build the actual E1.31 transport (WS-4.4)** — add `E131Transport` implementing
-   `DmxTransport` in [`runtime/sender.py`](../backend/runtime/sender.py) (or
-   [`runtime/e131.py`](../backend/runtime/e131.py) for framing only). Hand-rolled
-   638-byte DATA packets with byte-asserted tests; inject the socket in tests so CI
-   never transmits. Opt in via config only after box verification
-   ([D-013](decisions.md#d-013-hardware-output-defaults-to-a-null-implementation),
+1. **Finish universe box verification** — universe **1**, single universe, switch
+   destination, and **blackout on packet stop** are recorded
+   ([§6](fixture_and_transport_strategy.md#6-the-custom-universe-box-boundary)).
+   Still measure unicast vs multicast
+   ([D-017](decisions.md#d-017-sacn-unicast-versus-multicast)); finish WS-4.3
+   config fields (`source_name`, transport mode).
+2. **Prove the E1.31 transport on hardware (WS-4.4)** — the code is written
+   ([`runtime/e131.py`](../backend/runtime/e131.py), `E131Transport`) and covered by
+   byte tests; what remains is setting `dmx.transport = "e131"` with the box address,
+   confirming one activation lights the rig, and re-measuring p99 with the real
+   transport ([D-013](decisions.md#d-013-hardware-output-defaults-to-a-null-implementation),
    [D-020](decisions.md#d-020-hand-rolled-e131-framing)).
 3. **Real beat detection (WS-9)** — WASAPI loopback adapter on the existing command
    queue; keep `ManualBeatSource` for tests.

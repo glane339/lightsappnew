@@ -12,10 +12,10 @@ Longer horizon in [roadmap.md](roadmap.md).
 > when work resumes. Current maturity in
 > [project_overview.md](project_overview.md#current-maturity).
 
-> **Updated 2026-08-13.** Operator server M1 landed (see
-> [project_overview.md](project_overview.md#next-steps-priority-order)). Symbolic
-> sender is done; **actual E1.31 transport (WS-4.4) is the next hardware milestone**
-> after universe-box verification.
+> **Updated 2026-08-16.** Universe **1**, single-universe rig, and network-switch
+> destination IP (local `config.json` only) are recorded in
+> [fixture_and_transport_strategy.md §6](fixture_and_transport_strategy.md#6-the-custom-universe-box-boundary).
+> Unicast/multicast remains open (D-017). Packet-stop behaviour verified: **blackout**.
 >
 > **Server/runtime audit completed 2026-08-13** at `acc52a7`
 > ([Audit v3](audit_findings.md#audit-v3--operator-server--runtime)). Verdict:
@@ -37,6 +37,7 @@ Longer horizon in [roadmap.md](roadmap.md).
 | List-level `beats`, bounded `sensitivity` | Done (schema v4) |
 | `CueSequencer`, `SceneController`, outputs, `BeatSource` protocol | Done (WS-3) |
 | Symbolic DMX sender (`DmxTransport`, `NullTransport`, `SenderThread`) | Done (WS-4.2) |
+| E1.31 framing + `E131Transport` (`runtime/e131.py`, opt-in via `dmx.transport`) | Done in code (WS-4.4), **unverified on hardware** |
 | Send-on-change seam (`publish()` / `dmx_dirty`) | Done |
 | Operator server M1 (`backend/main.py`, `/ws/show`, REST control, latency) | Done (WS-11.1) |
 | M1 operator page (`frontend/index.html`) | Done |
@@ -47,9 +48,11 @@ Longer horizon in [roadmap.md](roadmap.md).
 
 ### Build next (dependency order)
 
-1. **Universe box verification** — record answers to the three questions in
-   [fixture_and_transport_strategy.md §6](fixture_and_transport_strategy.md#6-the-custom-universe-box-boundary);
-   settle [D-017](decisions.md#d-017-sacn-unicast-versus-multicast); finish WS-4.3
+1. **Universe box verification (partial)** — universe **1**, one universe, switch IP,
+   and **blackout on packet stop** are recorded in
+   [fixture_and_transport_strategy.md §6](fixture_and_transport_strategy.md#6-the-custom-universe-box-boundary).
+   Still measure unicast vs multicast; settle
+   [D-017](decisions.md#d-017-sacn-unicast-versus-multicast); finish WS-4.3
    config fields (`source_name`, transport mode).
 2. **WS-4.4 · Actual E1.31 sender** — `E131Transport` behind `DmxTransport`; hand-rolled
    framing + byte tests; socket injected in tests; opt-in via config after box sign-off.
@@ -344,15 +347,20 @@ migratable through `REFERENCES` in [`records.py`](../backend/storage/records.py)
 - **Goal.** Reshape `DMXConfig`: unicast/multicast, source name, per-universe
   destinations; fix the `refresh_hz: 120` default.
 - **Partly done.** `universe` (now 1), `host`, `port`, and `priority` exist, recovered
-  from the previous app's config file — unverified against the box.
+  from the previous app's config file — universe **1** and switch destination
+  recorded ([§6](fixture_and_transport_strategy.md#6-the-custom-universe-box-boundary));
+  unicast/multicast still open.
 - **Why.** [AF-M06](audit_findings.md#af-m06), [AF-L01](audit_findings.md#af-l01);
   the current three fields cannot describe a working sACN setup.
 - **Dependencies.** [D-017](decisions.md#d-017-sacn-unicast-versus-multicast), and
   verification against the actual universe box.
 - **Acceptance.** Config expresses a complete destination; defaults are valid;
   no IPs or hostnames appear in the repository.
-- **Status.** **Blocked** — the box's expectations are unverified
-  ([fixture_and_transport_strategy.md](fixture_and_transport_strategy.md#6-the-custom-universe-box-boundary)).
+- **Status.** **Partially verified** — universe **1**, single universe, network
+  switch destination (IP in local `config.json` only), and **blackout on packet stop**
+  are recorded in
+  [fixture_and_transport_strategy.md §6](fixture_and_transport_strategy.md#6-the-custom-universe-box-boundary).
+  Unicast/multicast and source name still open ([D-017](decisions.md#d-017-sacn-unicast-versus-multicast)).
 - **Files.** [`storage/config.py`](../backend/storage/config.py).
 
 ### 4.4 Real sACN sender — **NEXT HARDWARE MILESTONE**
@@ -362,7 +370,8 @@ migratable through `REFERENCES` in [`records.py`](../backend/storage/records.py)
 - **Why.** The latency budget is already measured server-receive → `NullTransport.send`
   (software path only); this adds the UDP `sendto` while keeping the same thread model
   ([D-019](decisions.md#d-019-send-on-change--keepalive-cadence)).
-- **Dependencies.** 4.2 (done), 4.3 (blocked on box verification).
+- **Dependencies.** 4.2 (done), 4.3 (partial — universe 1, switch destination,
+  packet-stop blackout recorded; unicast/multicast open).
 - **Audit v3 items to fold in (none implemented yet):**
   [F-01](audit_findings.md#f-01) — fix the ack/latency-ledger pairing *before* the
   ledger is used as acceptance evidence; [F-02](audit_findings.md#f-02) — exception
@@ -391,7 +400,16 @@ migratable through `REFERENCES` in [`records.py`](../backend/storage/records.py)
   sequence numbers increment per universe and wrap; clean shutdown sends blackout
   then closes; a send failure logs and does not take the show down; p99 latency
   budget still met with real transport enabled.
-- **Status.** **Not started** — blocked on 4.3 / universe-box verification.
+- **Status.** **Code landed 2026-08-16, unverified on hardware.**
+  [`runtime/e131.py`](../backend/runtime/e131.py) frames 638-byte DATA packets;
+  `E131Transport` in [`runtime/sender.py`](../backend/runtime/sender.py) sends them
+  unicast or multicast with an injectable socket; `build_transport()` keeps
+  `NullTransport` as the default. Folded in: [F-02](audit_findings.md#f-02) (sender
+  exception guard), [F-05](audit_findings.md#f-05) (blackout before close, both in
+  `E131Transport.close()` and `engine.stop()`), [F-10](audit_findings.md#f-10)
+  (self-test refuses a live transport), [F-15](audit_findings.md#f-15) (`refresh_hz`
+  default 120 → 44). **Remaining:** [F-01](audit_findings.md#f-01) ack-ledger pairing,
+  unicast/multicast confirmation, and one activation against the physical box.
 - **Files.** [`backend/runtime/e131.py`](../backend/runtime/e131.py) (new),
   [`backend/runtime/sender.py`](../backend/runtime/sender.py),
   [`backend/storage/config.py`](../backend/storage/config.py),

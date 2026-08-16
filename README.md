@@ -4,12 +4,14 @@ Show-control application for a lighting rig: DMX over E1.31, WLED via LEDfx, and
 (deferred) ILDA laser output, driven by manually selected, audio-reactive scenes.
 
 **Current state:** persistence layer, beat-driven show-control core, operator HTTP
-server, and a symbolic DMX sender (`NullTransport` — no packets leave the machine).
-Real audio capture and E1.31 network output are not implemented. The server/runtime
-layer was independently audited at `acc52a7`
+server, and an E1.31 sender that frames and transmits real sACN — but stays off until
+`dmx.transport` is set to `"e131"` in the local config, so a fresh install emits
+nothing. Real audio capture is still not implemented; beats are manual. The
+server/runtime layer was independently audited at `acc52a7`
 ([Audit v3](docs/audit_findings.md#audit-v3--operator-server--runtime)):
-**READY WITH MINOR FIXES**; universe-box verification, then real E1.31 transport,
-remain the next milestones. Nothing is hardware-proven. See
+**READY WITH MINOR FIXES**. Universe **1** and the switch destination are documented
+and the box **blacks out when packets stop**; unicast vs multicast is unconfirmed and
+no frame has reached the rig. See
 [docs/project_overview.md](docs/project_overview.md).
 
 ## Structure
@@ -17,7 +19,7 @@ remain the next milestones. Nothing is hardware-proven. See
 - `backend/` — Python backend
   - `models/` — pydantic runtime models
   - `storage/` — JSON persistence, integrity, migrations, archive
-  - `runtime/` — scene controller, cue sequencer, DMX/WLED outputs, universe buffer, symbolic sender
+  - `runtime/` — scene controller, cue sequencer, DMX/WLED outputs, universe buffer, E1.31 framing and sender
   - `server/` — FastAPI app, show engine, control routes
   - `audio/` — beat source protocol (manual implementation only; no detector)
   - `ledfx/` — LEDfx HTTP client and scene sync (null by default)

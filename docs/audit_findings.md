@@ -60,20 +60,20 @@ transport milestone's acceptance is claimed; **during E1.31** = fold into WS-4.4
 | ID | Severity | Area | Finding | Timing |
 | --- | --- | --- | --- | --- |
 | [F-01](#f-01) | High | Ack/latency ledger | `_awaiting_send` can pair an ack with the wrong command under a command burst | Before E1.31 |
-| [F-02](#f-02) | Medium | Sender resilience | No exception guard in `SenderThread._run`; a raising transport kills the thread silently | Before/during E1.31 |
+| [F-02](#f-02) | Medium | Sender resilience | No exception guard in `SenderThread._run`; a raising transport kills the thread silently | **Resolved 2026-08-16** |
 | [F-03](#f-03) | Medium | Runtime state | Module-global `active_dmx_channels` / `dmx_dirty` / publish counter shared across engine instances | Before WS-9 (real beat thread) |
 | [F-04](#f-04) | Medium | Stop script | `stop-server.ps1` force-kills past graceful shutdown; fallback matches any `backend/main.py` process | Before E1.31 hardware output |
-| [F-05](#f-05) | Medium | Shutdown | Blackout-on-clean-shutdown (D-011, Accepted) still unimplemented; shutdown ordering can drop a racing blackout command | During E1.31 |
+| [F-05](#f-05) | Medium | Shutdown | Blackout-on-clean-shutdown (D-011, Accepted) still unimplemented; shutdown ordering can drop a racing blackout command | **Resolved 2026-08-16** (ordering race stays, see [F-09](#f-09)) |
 | [F-06](#f-06) | Medium | Concurrency / persistence | Scene-sync thread mutates and saves the `Library` cross-thread (refines [AF2-H01](#af2-h01)) | Later (with WS-10) |
 | [F-07](#f-07) | Low | Sender wake path | Keepalive-timeout window can swallow a `dmx_dirty` set, stranding ledger entries (frame content still correct) | During E1.31 |
 | [F-08](#f-08) | Low | WebSocket | Shared event queue splits state/ack events arbitrarily across multiple operator sockets | Later |
 | [F-09](#f-09) | Low | Shutdown | Queued commands dropped without error acks at stop; `submit()` accepted after stop | Later |
-| [F-10](#f-10) | Low | Diagnostics | `/api/diag/selftest` clears the live latency ring and would drive 1000 real activations against a future real transport | During E1.31 |
+| [F-10](#f-10) | Low | Diagnostics | `/api/diag/selftest` clears the live latency ring and would drive 1000 real activations against a future real transport | **Resolved 2026-08-16** |
 | [F-11](#f-11) | Low | Repo hygiene | `.devdata/` commits a runtime log; `.devdata/logs/` not ignored | Anytime |
 | [F-12](#f-12) | Low | Docs / UI wording | Latency wording overstates the measured span at both ends in two places | Anytime |
 | [F-13](#f-13) | Info | Tuning | `gc.freeze()` runs before the app is built, so its comment overstates the effect | — |
 | [F-14](#f-14) | Info | LEDfx resilience | Shared `LedFxClient` races are benign; a non-`LedFxError` exception would kill the WLED worker (narrows [AF2-M04](#af2-m04)) | — |
-| [F-15](#f-15) | Info | DMX cadence | `refresh_hz: 120` keepalive exceeds the ~44 Hz physical DMX line rate (confirms [AF-L01](#af-l01), now live as the sender cadence) | Resolve at box verification |
+| [F-15](#f-15) | Info | DMX cadence | `refresh_hz: 120` keepalive exceeds the ~44 Hz physical DMX line rate (confirms [AF-L01](#af-l01), now live as the sender cadence) | **Resolved 2026-08-16** (default now 44) |
 
 ## Findings
 
@@ -107,7 +107,8 @@ wire, and the only signal is `sender.running: false` in `/api/status`. The
 WS-4.4 plan says transports never raise, which leaves no second line of defence
 around the one thread whose death silently freezes the rig. **Fix:** guard the
 send, log, continue; optionally surface consecutive failures in
-`sender_health()`.
+`sender_health()`. **RESOLVED (2026-08-16):** `_run` guards the send and counts
+`send_errors`; `sender_health()` reports the transport's `send_failures`.
 
 ### F-03
 **Severity:** Medium · **Area:** Runtime state ownership · **Timing:** before WS-9
@@ -152,6 +153,9 @@ lifecycle and sender it said were missing now exist) — corrected in this docs
 pass. **Fix (with WS-4.4):** implement the close-time blackout in the transport
 **and** an explicit synchronous blackout in `engine.stop()` before close; test
 that the last frame handed to the transport before `close()` is all zeros.
+**RESOLVED (2026-08-16):** both are in place, plus a Stream_Terminated frame, and
+`test_shutdown_blacks_out_before_closing_the_transport` asserts the ordering.
+F-09's race is unchanged.
 
 ### F-06
 **Severity:** Medium · **Area:** Concurrency / persistence · **Timing:** later (with WS-10)
@@ -203,6 +207,7 @@ clears the live latency ring and drives up to 5000 real activations. Harmless
 against `NullTransport`; against a real transport it would strobe the physical
 rig and wipe the operational latency window mid-show. **Fix:** refuse (or
 require an explicit flag) when the configured transport is not null.
+**RESOLVED (2026-08-16):** the route returns 409 unless the transport is `null`.
 
 ### F-11
 **Severity:** Low · **Area:** Repository hygiene · **Timing:** anytime
@@ -255,8 +260,10 @@ exception type would kill the WLED worker silently — the same shape as
 keepalive (`keepalive_s = 1/refresh_hz`), i.e. a continuous ~120 Hz frame stream
 when idle — while a full 512-slot DMX frame tops out near 44 Hz on the physical
 bus. **Confirms [AF-L01](#af-l01)**, upgraded from a dormant config default to
-an active cadence choice. Resolve against the real box during WS-4.3
-verification, as already planned.
+an active cadence choice. **RESOLVED (2026-08-16):** the default is now 44 Hz,
+which is inside the physical bus rate and far inside E1.31's 2.5 s receiver
+timeout — the margin that matters, since this box blacks out when packets stop.
+Existing local configs keep whatever value they already store.
 
 ## Concurrency assessment
 
@@ -577,7 +584,7 @@ What actually executes today, end to end:
 1. `Library.open(root)` → layout, migration to schema v4 (snapshot first),
    ten collections loaded, integrity checked; ILDA folder sync is opt-in.
 2. `python backend/seed_devices.py` → seeds the two-fixture basement patch
-   (GigBAR 2 at 1–23, Keobin bar at 25–42, universe 1) idempotently, and prints
+   (GigBAR 2 at 1–23, Keobin bar at 24–41, universe 1) idempotently, and prints
    the patch table.
 3. `SceneController.activate(scene_id)` → resolves scene → preset → both cue lists,
    applies cue 0 to the DMX universe buffer and LEDfx (via injected outputs).
@@ -710,11 +717,11 @@ so operator re-patching survives re-runs (docstring states this contract);
 repeated runs are safe (tested); `main()` is an explicit one-shot CLI against
 the real data folder, which is the right home for this — it is not runtime
 behavior and nothing imports it at runtime. The hard-coded `RIG` table matches
-the documented patch, keeps the fixtures' physically dialled addresses (1 and 25
-from the old 24-wide layout) while taking true channel counts from the manuals —
-the comment explains exactly this reasoning. Seeded addresses verified
-non-overlapping end-to-end through `build_channels` (tested, including the spare
-channel 24).
+the documented patch, keeps the fixtures' physically dialled addresses (1 and 24)
+while taking true channel counts from the manuals — the comment explains exactly
+this reasoning. Seeded addresses verified non-overlapping end-to-end through
+`build_channels`. **Re-patched 2026-08-16:** the Keobin moved from 25 to 24, making
+the patch contiguous and freeing everything from 42 up.
 
 Two mild caveats, neither worth code changes now: matching by name means
 *renaming* a seeded device and re-running the script re-adds it under the RIG
@@ -729,7 +736,7 @@ convention; [chauvet_gigbar_2.md](fixtures/chauvet_gigbar_2.md) (23CH, full
 channel + value tables, hardware constraints noted);
 [keobin_light_bar.md](fixtures/keobin_light_bar.md) (18CH, transliterated).
 Cross-checked: `model` identifiers, modes, and channel counts match
-`seed_devices.RIG` exactly; the patch table (1–23, 25–42, spare 24, universe 1)
+`seed_devices.RIG` exactly; the patch table (1–23, 24–41, universe 1)
 matches the seed and the seed test; channel numbering is documented as 1-based
 relative to `start_address`, matching the runtime's `start_address − 1` offset.
 The tables are detailed enough to author real looks against.
@@ -1231,7 +1238,7 @@ Remaining drift at HEAD, all cosmetic:
 | AF-M03 | Module-global runtime state, no concurrency story | **OPEN** | `active_dmx_channels` module global remains; `DmxOutput` accepts injection | [AF2-H01](#af2-h01) extends |
 | AF-M04 | Model/record four-place edits | **OPEN** (accepted cost) | Both `7ece72d` and `ddcadf8` paid it correctly in all four places | — |
 | AF-M05 | `Library.load()` writes to disk | **PARTLY RESOLVED** | `sync_ilda` defaults false; construct still runs migrate/ensure_config | — |
-| AF-M06 | `DMXConfig.universe` defaults to 0 | **RESOLVED** (`ddcadf8`) | `universe = 1 (ge=1, le=63999)`; `host`/`port`/`priority` added, recovered from the old app's config — explicitly **unverified against the box** | — |
+| AF-M06 | `DMXConfig.universe` defaults to 0 | **RESOLVED** (`ddcadf8`) | `universe = 1 (ge=1, le=63999)`; `host`/`port`/`priority` added, recovered from the old app's config. Universe **1** and switch destination documented 2026-08-16 ([§6](fixture_and_transport_strategy.md#6-the-custom-universe-box-boundary)) | — |
 | AF-M07 | Empty duplicate config module | **RESOLVED** | Compile-time defaults module, documented | — |
 | AF-M08 | No logging | **RESOLVED** | `logging_setup.py` + storage/ledfx/seed logging; no entry point calls it yet (none exists) | — |
 | AF-L01 | `refresh_hz = 120` exceeds DMX512 | **OPEN** | Default still 120 (now validated `ge=1`); bus caps near 44 Hz | — (P6) |
@@ -1385,11 +1392,10 @@ software first.
       channel against `docs/fixtures/`.
 
 **E1.31 / universe box (needs the custom box):**
-- [ ] Universe number the box accepts (config default 1 unverified).
-- [ ] Real box IP replaces the recovered `127.0.0.1`; port 5568 and priority
-      100 confirmed.
+- [x] Universe number: **1** (single universe rig) — [§6](fixture_and_transport_strategy.md#6-the-custom-universe-box-boundary).
+- [ ] Switch static IP set in local `config.json` as `dmx.host` (from switch manual); port 5568 and priority 100 confirmed on wire.
 - [ ] Unicast accepted (or multicast required).
-- [ ] Behavior when packets stop: hold vs. blackout.
+- [x] Behavior when packets stop: **blackout** — [§6](fixture_and_transport_strategy.md#6-the-custom-universe-box-boundary).
 - [ ] Sustained cadence without coalescing/dropping at the configured rate.
 - [ ] Blackout command produces darkness; clean exit leaves the intended state.
 - [ ] Windows Firewall rule for outbound UDP 5568 pre-approved.

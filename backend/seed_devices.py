@@ -19,10 +19,10 @@ from storage.records import DMX_DEVICES
 
 logger = logging.getLogger(__name__)
 
-# Addresses here must match what is dialled into each fixture, so they are carried
-# over from the previous app's positional layout (24-channel blocks per device)
-# rather than compacted. Channel counts, by contrast, come from the manuals: the old
-# 24 was padding, and an overlong count would leave a phantom channel in every look.
+# Addresses here must match what is dialled into each fixture. Channel counts come
+# from the manuals rather than from the previous app's uniform 24-channel blocks: the
+# extra channel was padding, and an overlong count leaves a phantom channel in every
+# look.
 RIG: Tuple[Dict[str, Any], ...] = (
     {
         "name": "GigBAR 2",
@@ -37,7 +37,7 @@ RIG: Tuple[Dict[str, Any], ...] = (
         "model": "keobin_light_bar",
         "mode": "18CH",
         "universe": 1,
-        "start_address": 25,
+        "start_address": 24,
         "channel_count": 18,
     },
 )

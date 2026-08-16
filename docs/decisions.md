@@ -29,7 +29,7 @@ Follow-up.
 | [D-017](#d-017-sacn-unicast-versus-multicast) | sACN unicast versus multicast | Open |
 | [D-018](#d-018-ledfx-preset-identifier-form) | LEDfx preset identifier form | Accepted |
 | [D-019](#d-019-send-on-change--keepalive-cadence) | Send-on-change + keepalive cadence | Accepted |
-| [D-020](#d-020-hand-rolled-e131-framing) | Hand-rolled E1.31 framing | Proposed |
+| [D-020](#d-020-hand-rolled-e131-framing) | Hand-rolled E1.31 framing | Accepted |
 
 ---
 
@@ -227,10 +227,14 @@ library dependency will be required.
 **Alternatives.** Art-Net (viable; the box's actual protocol has not been verified
 from the repository); USB DMX (rejected: the hardware is networked).
 
-**Follow-up.** `DMXConfig` now carries `universe`, `host`, `port`, and `priority`,
-recovered from the previous version of the app's config file
-([AF-M06](audit_findings.md#af-m06)); it still lacks a unicast/multicast setting and
-a source name. **The box's actual expectations remain unverified.** A symbolic
+**Follow-up.** `DMXConfig` carries `universe` (default **1**), `host`, `port`, and
+`priority`, recovered from the previous version of the app's config file
+([AF-M06](audit_findings.md#af-m06)). **Universe 1 and a single-universe rig are
+confirmed**; E1.31 is addressed to the **network switch** (static IP from the switch
+manual in local `config.json` only —
+[fixture_and_transport_strategy.md §6](fixture_and_transport_strategy.md#6-the-custom-universe-box-boundary)).
+Unicast/multicast and source name remain open. Box **blackouts when packets stop**
+([§6](fixture_and_transport_strategy.md#6-the-custom-universe-box-boundary)). A symbolic
 sender ([`runtime/sender.py`](../backend/runtime/sender.py)) exists and defaults to
 `NullTransport`; no E1.31 packet is framed or sent.
 
@@ -309,7 +313,8 @@ hurt. Generalise only when a second real requirement appears.
 
 ## D-011: Hold between scenes, blackout on clean shutdown
 
-**Status:** **Accepted**; the hold half is implemented, the blackout half is not.
+**Status:** **Accepted and implemented** — `engine.stop()` sends zeros before
+`E131Transport.close()`, which repeats the blackout and then terminates the stream.
 
 **Context.** When a scene is deactivated, the DMX universe buffer either keeps its
 values or is zeroed.
@@ -319,30 +324,28 @@ what an operator wants mid-show. Blacking out on clean exit avoids leaving the r
 lit with nothing controlling it.
 
 **Consequences.** Deactivation is cheap: `SceneController.deactivate()` drops both
-sequencers and touches no output, so the buffer keeps the last look. The blackout
-half is still unimplemented, but the earlier reason no longer holds: as of
-`acc52a7` the process lifecycle (`engine.stop()` in the app lifespan) and the
-sender thread both exist — `engine.stop()` simply never writes zeros before
-closing the transport ([Audit v3 F-05](audit_findings.md#f-05)). The operator
-`blackout` *command* exists and works mid-show; the *shutdown* blackout does not.
-The plan is for WS-4.4's `E131Transport.close()` to send a blackout /
-Stream_Terminated frame, with an explicit engine-level blackout in `stop()`
-before close as belt and braces — shutdown must write zeros and send one final
-frame *before* closing the socket, and a test should assert zeros-then-close.
-Note the shutdown ordering hazard: the sender is stopped before the show thread
-is joined, so a blackout command racing shutdown can be dropped
-([F-09](audit_findings.md#f-09)), and `stop-server.ps1`'s force-kill bypasses
-the lifespan entirely ([F-04](audit_findings.md#f-04)). LEDfx needs an
-equivalent explicit action
+sequencers and touches no output, so the buffer keeps the last look. Shutdown does
+the opposite in two places ([F-05](audit_findings.md#f-05) closed): `engine.stop()`
+zeroes the buffer and hands one final frame to the transport while the socket is
+still open, and `E131Transport.close()` repeats the blackout and then sends a
+Stream_Terminated frame. A test asserts the last frame before close is all zeros.
+Note the remaining shutdown ordering hazard: the sender is stopped before the show
+thread is joined, so a blackout *command* racing shutdown can still be dropped
+([F-09](audit_findings.md#f-09)), and `stop-server.ps1`'s force-kill bypasses the
+lifespan entirely ([F-04](audit_findings.md#f-04)) — though the box blacking out on
+packet loss covers that case. LEDfx needs an equivalent explicit action
 ([wled_ledfx_architecture.md](wled_ledfx_architecture.md#64-shutdown)) since it
 keeps rendering regardless.
 
 **Alternatives.** Blackout on every deactivation (rejected: visible gap); hold
 always, including on exit (rejected: rig stays lit after the app closes).
 
-**Follow-up.** Depends on what the universe box does when packets stop — unverified.
-An abnormal termination cannot send a blackout frame, so if the box holds last
-values, a crash leaves the rig lit.
+**Follow-up.** The universe box **blackouts when packets stop**
+([§6](fixture_and_transport_strategy.md#6-the-custom-universe-box-boundary)), so a
+crash stops DMX output without a final frame. Clean-shutdown blackout
+(`E131Transport.close()`, engine `stop()`) remains required for a controlled exit,
+Stream_Terminated semantics, and LEDfx coordination
+([wled_ledfx_architecture.md](wled_ledfx_architecture.md#64-shutdown)).
 
 ---
 
@@ -425,24 +428,27 @@ changes.
 
 ## D-020: Hand-rolled E1.31 framing
 
-**Status:** Proposed — next implementation step after universe-box verification.
+**Status:** **Accepted and implemented** — [`runtime/e131.py`](../backend/runtime/e131.py).
 
-**Context.** WS-4.4 needs to frame 512 DMX slots into E1.31 DATA packets. Options
-are a library (`sacn`, `python-sacn`) or hand-rolled bytes (~638-byte layout).
+**Context.** WS-4.4 needed to frame 512 DMX slots into E1.31 DATA packets. Options
+were a library (`sacn`, `python-sacn`) or hand-rolled bytes (638-byte layout).
 
-**Decision (proposed).** Hand-roll framing in `runtime/e131.py` with byte-asserted
-unit tests (WS-4.4). Keeps the send-on-change wake fully under our control, avoids a
-new production dependency until sign-off, and matches the server build plan.
+**Decision.** Hand-rolled framing in `runtime/e131.py` with byte-asserted unit tests.
+Keeps the send-on-change wake fully under our control and avoids a new production
+dependency for a layout that never changes.
 
-**Consequences.** `E131Transport` in `runtime/sender.py` calls the framer and owns
-the UDP socket. Tests inject a fake socket — no real packets in CI. The `sacn`
-library remains the documented fallback if framing maintenance becomes costly.
+**Consequences.** `E131Transport` in [`runtime/sender.py`](../backend/runtime/sender.py)
+calls the framer and owns the UDP socket. Tests inject a fake socket — no real packets
+in CI. The CID is derived from the source name via UUID5, so it survives restarts
+without being stored. The `sacn` library remains the fallback if framing maintenance
+becomes costly.
 
-**Alternatives.** `sacn` library (viable; adds dependency and may fight custom
-wake timing). Art-Net (rejected: wrong protocol for this hardware).
+**Alternatives.** `sacn` library (viable; adds a dependency and its own threading).
+Art-Net (rejected: wrong protocol for this hardware).
 
-**Follow-up.** Land only after [D-017](decisions.md#d-017-sacn-unicast-versus-multicast)
-is settled against the physical box. Implementation checklist in
+**Follow-up.** Enabling it on hardware still depends on
+[D-017](decisions.md#d-017-sacn-unicast-versus-multicast); until then `dmx.transport`
+stays `"null"`. Checklist in
 [current_sprint.md § 4.4](current_sprint.md#44-real-sacn-sender--next-hardware-milestone).
 
 ---
@@ -515,9 +521,14 @@ threading design. See
 
 **Status:** **Open.**
 
-Recommended: unicast to the box's configured IP — one known receiver, no IGMP
-concerns, trivially debuggable. Cannot be settled until the box's actual
-expectations are verified. See
+**Verified (2026-08-16).** Single universe, universe **1**; E1.31 destination is
+the **network switch** (static IP from the switch manual in local `config.json` only);
+box **blackouts when packets stop**. See
+[fixture_and_transport_strategy.md §6](fixture_and_transport_strategy.md#6-the-custom-universe-box-boundary).
+
+Recommended: unicast to the switch IP — one known receiver, no IGMP concerns,
+trivially debuggable. Cannot be settled until unicast vs multicast is confirmed on
+the wire. See
 [fixture_and_transport_strategy.md](fixture_and_transport_strategy.md#52-open-transport-decisions).
 
 ---

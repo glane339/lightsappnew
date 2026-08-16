@@ -223,14 +223,17 @@ class DMXConfig(BaseModel):
 `host`, `port`, and `priority` were recovered from the previous version of the app's
 config file, which is the only record of what the rig was actually driven with;
 `universe` was corrected from an invalid 0 at the same time
-([AF-M06](audit_findings.md#af-m06)). **None of it is verified against the universe
-box** — it is a starting point recovered from history, not a tested configuration.
+([AF-M06](audit_findings.md#af-m06)). **None of it is verified against the universe box on the wire** — it is a starting
+point recovered from history, not a tested configuration. **Universe 1 and a single
+universe are confirmed for this rig** ([§6](#6-the-custom-universe-box-boundary));
+`host` must be set to the **network switch static IP** (from the switch manual) in
+local `config.json` before real E1.31 output — not the loopback default below.
 
 What still needs attention:
 
 | Field | Issue |
 | --- | --- |
-| `host = "127.0.0.1"` | Loopback, so this is whatever the old app was tested against rather than the box's real address. Unicast/multicast selection is still not expressible. |
+| `host = "127.0.0.1"` | Loopback placeholder from dev/testing. Production: set to the **network switch IP** from the switch manual in local `config.json` ([§6](#6-the-custom-universe-box-boundary)). Unicast/multicast selection is still not expressible. |
 | `interface` | Ambiguous: is this a local NIC to bind to, or a destination? Both are needed and this is one field. |
 | `refresh_hz = 120` | Physical DMX512 tops out near 44 Hz for a full 512-slot frame. 120 Hz of E1.31 traffic cannot be reproduced on the bus and will be coalesced or dropped by the gateway. [AF-L01](audit_findings.md#af-l01) |
 
@@ -247,7 +250,7 @@ answered from the repository.
 | --- | --- | --- |
 | **Unicast vs multicast** | Unicast to the box's IP; multicast to `239.255.x.y` derived from universe | **Unicast recommended** for a single known receiver on a home LAN: no IGMP snooping concerns, no multicast flooding to unrelated devices, trivially debuggable. Multicast is for rigs with many receivers. |
 | **Destination** | Static IP in config; discovery | Static. Discovery is unnecessary complexity for one box. |
-| **Universe numbering** | Must match the box's expectation | **Unverified.** Do not guess. |
+| **Universe numbering** | Must match the box's expectation | **Verified — universe 1 only** ([§6](#6-the-custom-universe-box-boundary)). |
 | **Cadence** | Continuous at N Hz; on change only; hybrid | **Decided — hybrid** ([D-019](decisions.md#d-019-send-on-change--keepalive-cadence)): implemented in `SenderThread`; keepalive from `DMXConfig.refresh_hz` |
 | **Sequence numbers** | Per-universe `uint8`, incrementing, wrapping | Required by the protocol for out-of-order detection. Must be per universe. |
 | **Priority** | Default 100 | Only matters with multiple sources. Expose it, default it, do not agonise over it. |
@@ -265,23 +268,44 @@ Requirements for the **real** transport (`E131Transport`, not yet in the tree):
   should not take the show down.
 - **Explicit start and stop.** The transport owns a socket; shutdown must be
   idempotent.
-- **Clean shutdown sends a blackout frame**, then closes. Otherwise the box holds
-  the last received values indefinitely and the rig stays lit after the app exits.
+- **Clean shutdown sends a blackout frame**, then closes. The box also **blackouts
+  when packets stop** ([§6](#6-the-custom-universe-box-boundary)), so a crash stops
+  DMX output — but an explicit shutdown frame is still required for a controlled
+  exit, Stream_Terminated semantics, and LEDfx coordination ([D-011](decisions.md#d-011-hold-between-scenes-blackout-on-clean-shutdown)).
 
 `NullTransport` today satisfies none of the wire requirements by design — it only
 proves the wake path.
 
-### 5.4 Next: actual E1.31 transport (WS-4.4)
+### 5.4 The E1.31 transport (WS-4.4)
 
-The symbolic half is done. Adding real output should **not** rewrite `SenderThread`.
+Landed 2026-08-16, without rewriting `SenderThread`.
 
-| Step | Work |
+| Step | State |
 | --- | --- |
-| 1. Verify box | Answer §6 questions; settle [D-017](decisions.md#d-017-sacn-unicast-versus-multicast); add `source_name` and transport mode to `DMXConfig` (WS-4.3) |
-| 2. Framing | New [`runtime/e131.py`](../backend/runtime/e131.py): `build_data_packet()`, sequence wrap, CID from source name ([D-020](decisions.md#d-020-hand-rolled-e131-framing)) |
-| 3. Transport | `E131Transport` in [`runtime/sender.py`](../backend/runtime/sender.py): `send()` + `close()`; inject socket in tests |
-| 4. Opt-in | Default remains `NullTransport`; config flag enables `E131Transport` only after manual box test |
-| 5. Accept | Byte tests without real UDP; p99 ≤ 10 ms with transport enabled; shutdown blackout verified on hardware |
+| 1. Config | **Done** — `transport`, `mode`, `source_name`, `bind_address` on `DMXConfig`; `interface` removed as ambiguous |
+| 2. Framing | **Done** — [`runtime/e131.py`](../backend/runtime/e131.py): `build_data_packet()`, `SequenceCounter`, `cid_from_source_name()`, `multicast_host()` ([D-020](decisions.md#d-020-hand-rolled-e131-framing)) |
+| 3. Transport | **Done** — `E131Transport` in [`runtime/sender.py`](../backend/runtime/sender.py): lazy socket, `send()` never raises, `close()` blacks out then terminates the stream |
+| 4. Opt-in | **Done** — `build_transport()` returns `NullTransport` unless `dmx.transport == "e131"` |
+| 5. Accept | **Partly** — byte tests pass against an injected fake socket; a manual activation against the physical box and a p99 re-measure with the real transport are outstanding |
+
+Config for real output, in the user's local `config.json` only:
+
+```json
+"dmx": {
+  "transport": "e131",
+  "mode": "unicast",
+  "universe": 1,
+  "host": "<universe-box-ip>",
+  "bind_address": "<this-machine's-nic-ip>",
+  "port": 5568,
+  "priority": 100,
+  "refresh_hz": 44
+}
+```
+
+`mode: "multicast"` ignores `host` and sends to the universe's group instead
+(`239.255.0.1` for universe 1), which is the fallback when the box's own address is
+unknown.
 
 Full checklist: [current_sprint.md § 4.4](current_sprint.md#44-real-sacn-sender--next-hardware-milestone).
 
@@ -289,22 +313,36 @@ Full checklist: [current_sprint.md § 4.4](current_sprint.md#44-real-sacn-sender
 
 ## 6. The custom universe box boundary
 
-The repository contains **no information whatsoever** about the custom DMX universe
-box — no firmware, no schematic, no protocol notes, no IP, no model number.
+The custom DMX universe box is treated as an **opaque network endpoint** — no
+firmware, schematic, or protocol notes live in this repository. Its internals
+(PCB, refresh behaviour, buffering) are not documented or assumed.
 
-It is therefore treated as an opaque network endpoint characterised entirely by:
-an IP address, the universe number(s) it listens for, and whether it expects
-unicast or multicast. Nothing about its internal PCB, refresh behaviour, buffering,
-or failure modes should be documented or assumed until it is measured.
+### Verified rig configuration (2026-08-16)
 
-Three things need to be established empirically and written down here:
+| Fact | Value | Where it lives |
+| --- | --- | --- |
+| **Universe count** | **1** — entire rig on a single sACN stream | Code assumes one buffer ([`runtime/active.py`](../backend/runtime/active.py)); multi-universe is out of scope |
+| **Universe number** | **1** | `DMXConfig.universe` default; all patched fixtures use universe 1 ([`docs/fixtures/README.md`](fixtures/README.md)) |
+| **E1.31 destination** | **Network switch** (static IP from the switch manual) | `dmx.host` in the user's local `config.json` only — **never committed** ([`paths.py`](../backend/storage/paths.py)) |
+| **Port** | **5568** (sACN default) | `DMXConfig.port` |
+| **Packet-stop behaviour** | **Blackout** — rig goes dark when sACN packets stop | Confirmed on hardware; aligns with [D-011](decisions.md#d-011-hold-between-scenes-blackout-on-clean-shutdown) shutdown requirement |
 
-1. What universe number(s) does it accept?
-2. Does it require multicast, or accept unicast?
-3. What does it do when packets stop — hold last values, or blackout?
+Set the switch IP when enabling real output:
 
-Question 3 determines whether the shutdown-blackout requirement in §5.3 is
-essential or merely tidy.
+```json
+"dmx": {
+  "universe": 1,
+  "host": "<switch-static-ip-from-manual>",
+  "port": 5568
+}
+```
+
+No IP addresses, hostnames, or MAC addresses belong in the repository.
+
+### Still to verify empirically
+
+1. Does the box require **multicast**, or accept **unicast** to the switch IP?
+   ([D-017](decisions.md#d-017-sacn-unicast-versus-multicast))
 
 ---
 
@@ -342,7 +380,7 @@ The live interface is `DmxTransport.send(channels)` plus `SenderThread.start()` 
 | --- | --- | --- |
 | `NullTransport` | Counts frames, opens no socket | **Yes** — nothing transmits |
 | `RecordingDmxSender` | Captures frames in memory for assertions | Test only (not a named class; tests use a local fake) |
-| Real E1.31 transport | The actual packet path | **Not present** — parked on universe-box verification |
+| `E131Transport` | Frames sACN and sends it over UDP | Opt-in via `dmx.transport = "e131"` |
 
 With that in place, the testable surface without any hardware or network is:
 
@@ -370,4 +408,4 @@ against the physical box is a manual, deliberate activity. See
 | Look references a missing fixture | Reject at load time via the `REFERENCES` integrity check, not at send time. |
 | Channel value out of range | Clamp at the buffer boundary and log. Never transmit invalid data. |
 | App exits | Blackout frame, then close the socket (§5.3). |
-| App crashes | The box holds its last state — behaviour unverified (§6). A watchdog is out of scope for now. |
+| App crashes | DMX **blackouts** when packets stop ([§6](#6-the-custom-universe-box-boundary)). LEDfx may keep rendering until explicitly stopped. A watchdog is out of scope for now. |

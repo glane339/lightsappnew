@@ -18,7 +18,7 @@ def test_seed_creates_the_documented_patch(library: Library) -> None:
     keobin = by_name["Keobin Light Bar"]
 
     assert (gigbar.start_address, gigbar.end_address, gigbar.channel_count) == (1, 23, 23)
-    assert (keobin.start_address, keobin.end_address, keobin.channel_count) == (25, 42, 18)
+    assert (keobin.start_address, keobin.end_address, keobin.channel_count) == (24, 41, 18)
     assert gigbar.model == "chauvet_gigbar_2"
     assert keobin.model == "keobin_light_bar"
     assert all(device.universe == 1 for device in (gigbar, keobin))
@@ -54,9 +54,7 @@ def test_seeded_addresses_do_not_overlap(library: Library) -> None:
 
     channels = build_channels(library, look.id)
 
-    # Each device's block is lit; the channel the old 24-wide patch left spare stays
-    # dark, as does everything past the last device.
-    assert channels[0:23] == [255] * 23
-    assert channels[23] == 0
-    assert channels[24:42] == [255] * 18
-    assert channels[42:] == [0] * (len(channels) - 42)
+    # The two blocks are contiguous — 1-23 then 24-41 — and nothing bleeds past the
+    # last device. An overlap would have raised in build_channels before reaching here.
+    assert channels[0:41] == [255] * 41
+    assert channels[41:] == [0] * (len(channels) - 41)

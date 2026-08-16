@@ -83,5 +83,5 @@ Measurement is part of the design, not an afterthought: `perf_counter_ns()` stam
 ## Open items the doc will flag
 
 - Real audio capture and beat detection (WS-9) is out of scope; the plan leaves the command queue as the seam so a WASAPI-loopback source drops in.
-- E1.31 transport stays `NullTransport` until the DMX universe box is verified (WS-4 is parked).
+- E1.31 transport stays `NullTransport` until wire verification completes (D-017, transport doc §6).
 - The 15 ms hardware allowance is an assumption, not a measurement; the doc records it as such.

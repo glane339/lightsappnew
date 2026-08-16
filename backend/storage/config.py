@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -18,20 +18,35 @@ from storage.paths import config_path, ensure_layout
 
 class DMXConfig(BaseModel):
     """
-    E1.31 (sACN) output settings, carried over from the previous app's config.
+    E1.31 (sACN) output settings.
 
-    No transport reads these yet — the live sender is ``NullTransport``. The universe
-    numbering starts at 1 to match ``DMX_Device.universe`` and E1.31 itself, where 0
-    is not a valid universe. Slot count is not configurable — it is ``UNIVERSE_SIZE``,
-    fixed by the protocol.
+    ``transport`` gates the wire: the default emits nothing, and ``"e131"`` is set by
+    hand in the user's local ``config.json`` once the rig is wired (D-013). This rig runs
+    a **single universe, universe 1**. Slot count is not configurable — it is
+    ``UNIVERSE_SIZE``, fixed by the protocol. The universe box blacks out when packets
+    stop, so ``refresh_hz`` is what holds a look, not just packet-loss insurance
+    (docs/fixture_and_transport_strategy.md §6).
+
+    No IP belongs in this file's defaults: ``host`` and ``bind_address`` are filled in
+    locally, outside the repository.
     """
 
+    transport: Literal["null", "e131"] = "null"
+    mode: Literal["unicast", "multicast"] = "unicast"
     universe: int = Field(default=1, ge=1, le=63999)
     host: str = "127.0.0.1"
     port: int = Field(default=5568, ge=1, le=65535)
     priority: int = Field(default=100, ge=0, le=200)
-    interface: Optional[str] = None
-    refresh_hz: int = Field(default=120, ge=1)
+    source_name: str = Field(default="Lights App", min_length=1, max_length=63)
+
+    # The local NIC to send from, as an address rather than an adapter name. Explicit
+    # because a machine with both Wi-Fi and Ethernet will otherwise pick by route metric,
+    # and multicast in particular has to be pinned to the interface the rig is on.
+    bind_address: Optional[str] = None
+
+    # A full 512-slot DMX frame tops out near 44 Hz on the physical bus, so a faster
+    # keepalive only adds traffic the gateway has to coalesce (AF-L01, F-15).
+    refresh_hz: int = Field(default=44, ge=1)
 
 
 class LedfxConfig(BaseModel):

@@ -18,19 +18,23 @@ per [D-014](../decisions.md#d-014-fixtures-become-first-class-persisted-objects)
 
 ## Patch
 
+**Single sACN universe: universe 1.** All fixtures below share that universe; the
+app sends one E1.31 stream to the **network switch** (static IP from the switch
+manual in local `config.json` only). Box **blackouts when packets stop** —
+[fixture_and_transport_strategy.md §6](../fixture_and_transport_strategy.md#6-the-custom-universe-box-boundary).
+
 Seeded by [`backend/seed_devices.py`](../../backend/seed_devices.py), universe 1:
 
 | Device | Channels | Mode |
 | --- | --- | --- |
 | GigBAR 2 | 1–23 | `23CH` |
-| Keobin Light Bar | 25–42 | `18CH` |
+| Keobin Light Bar | 24–41 | `18CH` |
 
-Channel 24 is deliberately spare. The previous version of the app addressed devices
-positionally in 24-channel blocks, so the fixtures are dialled to 1 and 25; the seed
-keeps those addresses so nothing has to be re-addressed at the rig, while taking the
-true channel counts from the manuals above.
+The patch is contiguous: each fixture's channel count comes from its manual above,
+rather than from the uniform 24-channel blocks the previous version of the app used.
+The Keobin is dialled to 24, immediately after the GigBAR's 23 channels.
 
-Everything from channel 43 up is free.
+Everything from channel 42 up is free.
 
 ## File format
 

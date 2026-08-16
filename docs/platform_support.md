@@ -154,21 +154,25 @@ Two consequences worth knowing:
 
 ## Network
 
-**DMX output does not exist.** LEDfx uses **httpx** when `ledfx.enabled` is true
-([`backend/ledfx/client.py`](../backend/ledfx/client.py)). No firewall rule is
-needed for DMX today; LEDfx HTTP is typically localhost.
+**DMX output exists but is off by default.** `dmx.transport` must be set to `"e131"`
+in the local `config.json` before anything binds a socket
+([`backend/runtime/sender.py`](../backend/runtime/sender.py)). LEDfx uses **httpx**
+when `ledfx.enabled` is true ([`backend/ledfx/client.py`](../backend/ledfx/client.py))
+and is typically localhost, so it needs no firewall rule.
 
-When transport work begins ([roadmap phase 4](roadmap.md#phase-4--reliable-dmx-universe-state-and-e131-transport)):
+Once `dmx.transport = "e131"` ([roadmap phase 4](roadmap.md#phase-4--reliable-dmx-universe-state-and-e131-transport)):
 
 | Path | Requirement | Notes |
 | --- | --- | --- |
 | E1.31 / sACN out | Outbound UDP, port 5568 | Windows Firewall prompts on first bind — worth pre-approving rather than discovering mid-show |
-| Multicast (if chosen) | IGMP on the LAN | Unicast is recommended for a single receiver; see [D-017](decisions.md#d-017-sacn-unicast-versus-multicast) |
+| Multicast (if chosen) | IGMP on the LAN | `dmx.mode = "multicast"` sends to `239.255.0.1` for universe 1 and ignores `dmx.host`; set `dmx.bind_address` so it leaves the right NIC. Unicast is recommended for a single receiver — [D-017](decisions.md#d-017-sacn-unicast-versus-multicast) |
 | LEDfx | HTTP to the LEDfx host | Typically `127.0.0.1:8888` when LEDfx runs on the same machine |
 
-The application and the lighting hardware must be on the same LAN. The DMX universe
-box's addressing is **unverified** —
-[fixture_and_transport_strategy.md](fixture_and_transport_strategy.md#6-the-custom-universe-box-boundary).
+The application and the lighting hardware must be on the same LAN. Rig addressing:
+**universe 1**, single universe, E1.31 to the **network switch** (static IP from the
+switch manual in local `config.json` only). Unicast/multicast still open; box
+**blackouts when packets stop** —
+[fixture_and_transport_strategy.md §6](fixture_and_transport_strategy.md#6-the-custom-universe-box-boundary).
 
 No IPs, hostnames, MAC addresses, or credentials belong in the repository. They go in
 the user's `config.json`, which lives outside the working tree.
@@ -233,7 +237,7 @@ required to develop against the current codebase:
 
 | Hardware | Status |
 | --- | --- |
-| Custom DMX universe box | Opaque endpoint; IP, universe numbering, and transport mode all unverified |
+| Custom DMX universe box | Opaque endpoint; **universe 1**, switch IP in local config; **blackout on packet stop**; unicast/multicast still open |
 | DMX fixtures | [`DMX_Device`](../backend/models/DMX_Device.py) records the patch; channel tables in [docs/fixtures/](fixtures/README.md) |
 | WLED controllers and strips | Managed entirely by LEDfx |
 | Audio interface | Undetermined; see above |
