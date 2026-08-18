@@ -3,6 +3,9 @@
 The primary architecture document. Assumes the terminology defined in
 [project_overview.md](project_overview.md#key-terminology).
 
+> **Terminology.** A "look" is a `dmx_preset` (`DMX_Preset`). Use `dmx_preset` going
+> forward — [D-023](decisions.md#d-023-a-look-is-a-dmx_preset).
+
 Throughout, **Current** describes code that exists in the repository today and
 **Target** describes proposed design that does not. Sections marked Target have not
 been implemented; show-control core modules are Current — see
@@ -40,6 +43,8 @@ backend/
 │   ├── scene_sync.py        Polls LEDfx; upserts WLED_Preset names
 │   └── service.py           build_ledfx_stack factory
 ├── logging_setup.py         File + stderr logging into data-folder logs/
+├── authoring/
+│   └── service.py           Typed Library mutations (WS-10)
 ├── models/                  Runtime pydantic models (11 files)
 │   ├── Scene.py             optional ilda_frame_list_id; sensitivity bounded 0–1
 │   ├── Preset.py            wled_preset_list_id → WLED_Preset_List
@@ -71,9 +76,13 @@ backend/
     ├── config.py            AppConfig (dmx/ledfx/ilda/audio/ui)
     └── archive.py           Zip export/import with traversal guards
 
-tests/                       pytest suite: storage, sequencing, outputs (temp data root)
+tests/                       pytest suite: storage, sequencing, outputs, authoring (temp data root)
 pytest.ini                   pythonpath = backend
 ```
+
+Show-graph create/update goes through [`authoring/service.py`](../backend/authoring/service.py)
+and the typed HTTP in [`backend/server/routes/`](../backend/server/routes/). Contract:
+[authoring.md](authoring.md). Route handlers do not call `Library.add()`.
 
 There is no `__init__.py` anywhere. Imports are absolute from the `backend/`
 directory (`from models.Scene import Scene`). `pytest.ini` sets `pythonpath = backend`
@@ -457,8 +466,9 @@ flowchart TD
 Steps shaded red do not exist. Today the chain resolves looks by patched address
 into one 512-value list, marks it dirty, and wakes
 [`runtime/sender.py`](../backend/runtime/sender.py), which calls `NullTransport`.
-Packet framing, sequence numbers, and UDP are still Target. Details and the open
-questions on cadence, unicast/multicast, priority, and sequence numbering are in
+Packet framing, sequence numbers, and UDP are implemented; cadence and unicast mode
+are decided ([D-017](decisions.md#d-017-sacn-unicast-versus-multicast),
+[D-019](decisions.md#d-019-send-on-change--keepalive-cadence)). Details in
 [fixture_and_transport_strategy.md](fixture_and_transport_strategy.md).
 
 ### 3.6 Target WLED / LEDfx flow
@@ -509,6 +519,23 @@ flowchart TB
         c3 --> c8
     end
 ```
+
+### 3.8 Target operator UI
+
+**Planned (WS-11.2).** Static multi-page client in `frontend/`, served by FastAPI.
+Two modes on the home page:
+
+- **Performance** — scene grid and beat indicator; activates via WebSocket `/ws/show`.
+- **Builder** — six authoring pages (GigBAR/Keobin device presets, `dmx_presets`,
+  both cue lists, scenes) as a thin client of the [authoring API](authoring.md).
+
+Fixture channel semantics for the Builder editors come from transcribed profiles in
+`frontend/js/fixtures/`, sourced from [docs/fixtures/](fixtures/README.md). The
+intermediate lighting `Preset` (DMX list + WLED list pair) is hidden on the Scenes
+page.
+
+Full page map, acceptance criteria, and backend gaps:
+[frontend_architecture.md](frontend_architecture.md).
 
 ---
 

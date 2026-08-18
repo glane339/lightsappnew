@@ -5,6 +5,9 @@ supplied project requirements), **Proposed** (a recommendation from the architec
 review, not yet adopted), or **Open** (a choice that must be made and cannot be
 inferred from the repository or supplied requirements).
 
+> **Terminology.** A "look" is a `dmx_preset` (`DMX_Preset`). Use `dmx_preset` going
+> forward — [D-023](#d-023-a-look-is-a-dmx_preset).
+
 Format: Decision · Status · Context · Rationale · Consequences · Alternatives ·
 Follow-up.
 
@@ -26,10 +29,12 @@ Follow-up.
 | [D-014](#d-014-fixtures-become-first-class-persisted-objects) | Fixtures become first-class persisted objects | Proposed |
 | [D-015](#d-015-the-reference-graph-stays-declarative) | The reference graph stays declarative | Accepted |
 | [D-016](#d-016-audio-event-delivery-mechanism) | Audio event delivery mechanism | Open |
-| [D-017](#d-017-sacn-unicast-versus-multicast) | sACN unicast versus multicast | Open |
+| [D-017](#d-017-sacn-unicast-versus-multicast) | sACN unicast versus multicast | Accepted |
 | [D-018](#d-018-ledfx-preset-identifier-form) | LEDfx preset identifier form | Accepted |
 | [D-019](#d-019-send-on-change--keepalive-cadence) | Send-on-change + keepalive cadence | Accepted |
 | [D-020](#d-020-hand-rolled-e131-framing) | Hand-rolled E1.31 framing | Accepted |
+| [D-022](#d-022-empty-cue-lists-cannot-be-authored) | Empty cue lists cannot be authored | Accepted |
+| [D-023](#d-023-a-look-is-a-dmx_preset) | A "look" is a `dmx_preset` | Accepted |
 
 ---
 
@@ -233,7 +238,8 @@ from the repository); USB DMX (rejected: the hardware is networked).
 confirmed**; E1.31 is addressed to the **network switch** (static IP from the switch
 manual in local `config.json` only —
 [fixture_and_transport_strategy.md §6](fixture_and_transport_strategy.md#6-the-custom-universe-box-boundary)).
-Unicast/multicast and source name remain open. Box **blackouts when packets stop**
+**Unicast** to the switch IP ([D-017](#d-017-sacn-unicast-versus-multicast)); `source_name`
+is on `DMXConfig`. Box **blackouts when packets stop**
 ([§6](fixture_and_transport_strategy.md#6-the-custom-universe-box-boundary)). A symbolic
 sender ([`runtime/sender.py`](../backend/runtime/sender.py)) exists and defaults to
 `NullTransport`; no E1.31 packet is framed or sent.
@@ -392,8 +398,8 @@ destination fields, but nothing reads them for a socket.
 **Alternatives.** Real-by-default with a test flag (rejected: one forgotten flag
 sends real traffic).
 
-**Follow-up.** Real sACN remains parked on universe-box verification (D-017, WS-4.4).
-See [project_overview.md § Next steps](project_overview.md#next-steps-priority-order).
+**Follow-up.** Real sACN is implemented behind `dmx.transport = "e131"` (WS-4.4); hardware
+sign-off remains. See [project_overview.md § Next steps](project_overview.md#next-steps-priority-order).
 
 ---
 
@@ -401,7 +407,8 @@ See [project_overview.md § Next steps](project_overview.md#next-steps-priority-
 
 **Status:** Accepted — implemented in the operator server.
 
-**Context.** A fixed-cadence sender alone blows the sub-10 ms software budget: polling
+**Context.** A fixed-cadence sender alone blows the 13 ms software budget (scene
+selection → sender): polling
 at 40 Hz adds 12.5 ms average queueing before a changed buffer leaves the machine.
 The old transport doc assumed a tick-driven loop.
 
@@ -414,8 +421,9 @@ receiver that missed a packet can recover. `SenderThread` owns the wait loop;
 `publish()` and `dmx_dirty`. [`runtime/sender.py`](../backend/runtime/sender.py)
 implements the thread. Keepalive interval comes from `DMXConfig.refresh_hz` (still
 defaults to 120 Hz — [AF-L01](audit_findings.md#af-l01) recommends lowering once a
-real transport exists). Latency is measured to the transport `send()` call, so
-swapping `NullTransport` for `E131Transport` does not change the instrumentation
+real transport exists). Latency is measured to the transport `send()` call (p99 ≤ 13 ms
+from scene selection — `LATENCY_BUDGET_US` in [`server/latency.py`](../backend/server/latency.py)),
+so swapping `NullTransport` for `E131Transport` does not change the instrumentation
 shape.
 
 **Alternatives.** Fixed tick only (rejected: violates latency budget). Change-only
@@ -446,10 +454,9 @@ becomes costly.
 **Alternatives.** `sacn` library (viable; adds a dependency and its own threading).
 Art-Net (rejected: wrong protocol for this hardware).
 
-**Follow-up.** Enabling it on hardware still depends on
-[D-017](decisions.md#d-017-sacn-unicast-versus-multicast); until then `dmx.transport`
-stays `"null"`. Checklist in
-[current_sprint.md § 4.4](current_sprint.md#44-real-sacn-sender--next-hardware-milestone).
+**Follow-up.** [D-017](decisions.md#d-017-sacn-unicast-versus-multicast) is settled:
+unicast to the switch IP. `dmx.transport` stays `"null"` until deliberate opt-in.
+Checklist in [current_sprint.md § 4.4](current_sprint.md#44-real-sacn-sender--next-hardware-milestone).
 
 ---
 
@@ -519,17 +526,17 @@ threading design. See
 
 ## D-017: sACN unicast versus multicast
 
-**Status:** **Open.**
+**Status:** Accepted (2026-08-17).
+
+**Decision.** **Unicast** to the network switch IP (`dmx.host`). One known receiver on
+a home LAN: no IGMP snooping concerns, no multicast flooding to unrelated devices,
+trivially debuggable. `DMXConfig.mode` defaults to `"unicast"`. The code still
+supports `"multicast"` for other rigs; this installation does not use it.
 
 **Verified (2026-08-16).** Single universe, universe **1**; E1.31 destination is
 the **network switch** (static IP from the switch manual in local `config.json` only);
 box **blackouts when packets stop**. See
 [fixture_and_transport_strategy.md §6](fixture_and_transport_strategy.md#6-the-custom-universe-box-boundary).
-
-Recommended: unicast to the switch IP — one known receiver, no IGMP concerns,
-trivially debuggable. Cannot be settled until unicast vs multicast is confirmed on
-the wire. See
-[fixture_and_transport_strategy.md](fixture_and_transport_strategy.md#52-open-transport-decisions).
 
 ---
 
@@ -553,3 +560,51 @@ field. Slugs are only needed for the activate call and can be refreshed each pol
 name a scene deleted in LEDfx keep a dangling-but-valid library id until the
 operator cleans them up. See
 [wled_ledfx_architecture.md](wled_ledfx_architecture.md#31-preset-identifiers).
+
+---
+
+## D-022: Empty cue lists cannot be authored
+
+**Status:** Accepted and implemented — [`AuthoringService`](../backend/authoring/service.py)
+refuses empty lists on create/update, and refuses a force-delete that would empty a
+still-referenced list.
+
+**Context.** `SceneController.activate` rejects a scene whose DMX or WLED cue list
+has no entries. If authoring allowed those lists (or let a delete empty them while a
+preset still pointed at them), the library could hold shows that can never run.
+
+**Rationale.** Playability is an authoring invariant, not only a runtime check. An
+empty list is never a valid intermediate state an operator meant to persist.
+
+**Consequences.** Cue lists are non-empty by construction. Duplicates within a list
+remain allowed (`A B A C`). Force-delete of the last look or LEDfx name in a list
+that a `Preset` still references is a `conflict`, not a silent empty-out. HTTP maps
+that to 409.
+
+**Alternatives.** Allow empty lists and fail at activation (rejected: the operator
+would store unplayable shows).
+
+**Follow-up.** Per-entry beats ([WS-3.5](current_sprint.md#35-per-entry-beat-counts))
+does not change this; a list with zero entries is still unplayable.
+
+---
+
+## D-023: A look is a dmx_preset
+
+**Status:** Accepted.
+
+**Context.** Docs and conversation used **look** for one static lighting state across
+the DMX rig. The stored type is [`DMX_Preset`](../backend/models/DMX_Preset.py)
+(`dmx_presets`). Calling the same object a look, a DMX preset, and a preset made the
+graph harder to follow than the code.
+
+**Rationale.** The collection name is the name. New writing should say `dmx_preset`
+(or `DMX_Preset` for the type), not "look". Older pages may still say look; treat
+that as this object.
+
+**Consequences.** Cue lists hold `dmx_preset_ids`. Authoring routes are
+`/api/dmx-presets`. A lighting `Preset` is a different layer (DMX list + WLED list).
+
+**Alternatives.** Keep "look" as the docs term (rejected: it is not in the model).
+
+**Follow-up.** Historical audits keep their original wording; they are not rewritten.

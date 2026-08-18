@@ -17,8 +17,11 @@ from typing import AsyncIterator, Optional
 from fastapi import FastAPI, WebSocket
 from fastapi.staticfiles import StaticFiles
 
+from authoring.service import AuthoringService
 from server.commands import ShowEvent
 from server.engine import ShowEngine
+from server.errors import register_exception_handlers
+from server.routes.authoring import router as authoring_router
 from server.routes.diag import router as diag_router
 from server.routes.scenes import router as scenes_router
 from server.routes.show import router as show_router
@@ -46,7 +49,8 @@ def create_app(
     resolved_root = ensure_layout(data_root)
     app_config = config if config is not None else ensure_config(resolved_root)
     library = Library.open(resolved_root, sync_ilda=False)
-    engine = ShowEngine(library, app_config)
+    authoring = AuthoringService(library)
+    engine = ShowEngine(library, app_config, authoring=authoring)
     events: "asyncio.Queue[ShowEvent]" = asyncio.Queue(maxsize=EVENT_QUEUE_MAX)
 
     @asynccontextmanager
@@ -69,11 +73,14 @@ def create_app(
     )
     app.state.config = app_config
     app.state.library = library
+    app.state.authoring = authoring
     app.state.engine = engine
     app.state.show_events = events
 
+    register_exception_handlers(app)
     app.include_router(show_router)
     app.include_router(scenes_router)
+    app.include_router(authoring_router)
     app.include_router(status_router)
     app.include_router(diag_router)
 

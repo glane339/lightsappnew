@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DMX cue lists — Builder</title>
+<link rel="stylesheet" href="/css/app.css">
+</head>
+<body>
+<main id="page">
+  <div class="split">
+    <section class="panel">
+      <h2>DMX cue lists</h2>
+      <div id="library" class="item-list"></div>
+      <div class="actions"><button type="button" id="new-btn">New</button></div>
+    </section>
+    <section class="panel">
+      <div id="banner" class="banner"></div>
+      <form id="form">
+        <label class="field">Id slug
+          <input id="list-id" name="id" placeholder="wash-cycle" autocomplete="off">
+        </label>
+        <label class="field">Beats per iteration
+          <input id="beats" type="number" min="1" step="1" value="1" required>
+        </label>
+        <p class="help">Beats apply to every entry. Duplicates are allowed (A B A C). Empty lists cannot be saved.</p>
+        <div id="register-wrap" hidden></div>
+        <div class="cue-cols">
+          <div>
+            <h2>Palette</h2>
+            <div id="palette" class="item-list"></div>
+          </div>
+          <div>
+            <h2>Cue order</h2>
+            <div id="cue-list" class="drag-list"></div>
+          </div>
+        </div>
+        <div class="actions">
+          <button type="submit" class="primary">Save</button>
+          <button type="button" id="delete-btn" class="danger" hidden>Delete</button>
+        </div>
+      </form>
+    </section>
+  </div>
+</main>
+<script>
+window.CUE_LIST_PAGE = {
+  nav: "dmx-preset-lists",
+  collection: "dmxLists",
+  palette: "dmxPresets",
+  idsField: "dmx_preset_ids",
+  pollMs: 0,
+  allowRegister: false
+};
+</script>
+<script src="/js/api.js"></script>
+<script src="/js/chrome.js"></script>
+<script src="/js/drag-list.js"></script>
+<script src="/js/pages/cue-list.js"></script>
+</body>
+</html>

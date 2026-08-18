@@ -22,7 +22,8 @@ class DMXConfig(BaseModel):
 
     ``transport`` gates the wire: the default emits nothing, and ``"e131"`` is set by
     hand in the user's local ``config.json`` once the rig is wired (D-013). This rig runs
-    a **single universe, universe 1**. Slot count is not configurable — it is
+    a **single universe, universe 1**, and sends **unicast** to the switch IP (D-017;
+    ``mode`` defaults to ``"unicast"``). Slot count is not configurable — it is
     ``UNIVERSE_SIZE``, fixed by the protocol. The universe box blacks out when packets
     stop, so ``refresh_hz`` is what holds a look, not just packet-loss insurance
     (docs/fixture_and_transport_strategy.md §6).

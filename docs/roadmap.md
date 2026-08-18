@@ -4,6 +4,9 @@ Phases from the current state — a data model and persistence layer — to a re
 basement installation. Near-term detail is in [current_sprint.md](current_sprint.md);
 this document is the longer arc and the exit criteria.
 
+> **Terminology.** A "look" is a `dmx_preset` (`DMX_Preset`). Use `dmx_preset` going
+> forward — [D-023](decisions.md#d-023-a-look-is-a-dmx_preset).
+
 No dates. The repository contains no schedule, and phases are sequenced by
 dependency rather than by calendar.
 
@@ -137,8 +140,8 @@ or multicast, blackout and Stream_Terminated on close). Rig addressing partially
 verified: **universe 1**, single universe, network switch destination, and blackout
 on packet stop
 ([fixture_and_transport_strategy.md §6](fixture_and_transport_strategy.md#6-the-custom-universe-box-boundary)).
-Outstanding: unicast vs multicast confirmation (D-017) and one activation against the
-physical box. Multi-universe buffers remain out of scope for a one-universe rig.
+Outstanding: one activation against the physical box. Multi-universe buffers remain
+out of scope for a one-universe rig.
 
 **Audit (2026-08-13).** The server/runtime layer was independently audited at
 `acc52a7` ([Audit v3](audit_findings.md#audit-v3--operator-server--runtime)):
@@ -158,17 +161,17 @@ must be re-proven with the real transport.
 - Clean shutdown sends a blackout frame before closing.
 - Real output is opt-in; null is the default.
 - **Verified against the physical universe box:** universe **1** (single universe),
-  switch destination, and **blackout on packet stop** recorded; unicast vs multicast
-  still to measure.
+  switch destination, **unicast** ([D-017](decisions.md#d-017-sacn-unicast-versus-multicast)),
+  and **blackout on packet stop** recorded; one end-to-end activation still outstanding.
 
 **Non-goals.** No Art-Net. No DMX input or merging. No multi-source priority
 arbitration beyond a configurable default. No RDM.
 
 **Risks.**
 - Universe **1** and switch destination are documented
-  ([fixture_and_transport_strategy.md §6](fixture_and_transport_strategy.md#6-the-custom-universe-box-boundary)),
-  but unicast/multicast is still unknown — schedule risk until the wire test
-  completes. Packet-stop behaviour is confirmed: **blackout**.
+  ([fixture_and_transport_strategy.md §6](fixture_and_transport_strategy.md#6-the-custom-universe-box-boundary));
+  transport mode is **unicast** ([D-017](decisions.md#d-017-sacn-unicast-versus-multicast)).
+  Packet-stop behaviour is confirmed: **blackout**. End-to-end hardware sign-off remains.
 - First production network dependency; needs explicit sign-off.
 - The sender must never block on anything but its own timer, or DMX output stutters
   when LEDfx or audio misbehaves.
@@ -248,9 +251,9 @@ that the room actually uses.
 - The configured patch matches the fixtures' physical DIP switches, verified fixture
   by fixture.
 - Every fixture responds correctly to a manually applied look.
-- The universe box's switch IP, universe **1**, and transport mode are configured in
-  local `config.json` and confirmed working on the wire (unicast/multicast still
-  open; packet-stop **blackout** confirmed).
+- The universe box's switch IP, universe **1**, and **unicast** transport are
+  configured in local `config.json` and confirmed working on the wire (packet-stop
+  **blackout** confirmed; end-to-end activation outstanding).
 - No IPs, hostnames, or MAC addresses appear anywhere in the repository — they live
   in the user's `config.json`, outside git
   ([`paths.py:26-32`](../backend/storage/paths.py#L26-L32)).
@@ -280,29 +283,36 @@ frontend contract. Detail in [WS-10](current_sprint.md#ws-10--show-authoring-fra
 - HTTP CRUD exists for scenes, presets, and cue lists; errors map consistently.
 - Request/response shapes are documented for the future `frontend/` client.
 
-**Non-goals.** No pixel editor, no DMX look authoring UI (channel sliders) in v1 —
-looks may still be authored via JSON or a later pass. No auth beyond single-operator
-LAN. No WebSocket show stream yet.
+**Non-goals.** No pixel editor. DMX look authoring UI (fixture section editors) is
+WS-11.2 — [frontend_architecture.md](frontend_architecture.md); phase 7a delivered
+the HTTP layer only. No auth beyond single-operator LAN. No WebSocket show stream yet.
 
 **Risks.** Duplicating graph rules in the API layer instead of delegating to one
 authoring service ([WS-10.5](current_sprint.md#105-authoring-service-owner)).
 
 **Dependencies.** Phases 2, 3.
 
-**Status.** Not started — tracked as WS-10 in [current_sprint.md](current_sprint.md).
+**Status.** **Done** — tracked as WS-10 in [current_sprint.md](current_sprint.md);
+contract in [authoring.md](authoring.md). Full authoring UI remains phase 8 / WS-11.2;
+page plan in [frontend_architecture.md](frontend_architecture.md).
 
 ---
 
 ## Phase 8 · Operator UI and recovery behaviour
 
-**Scope.** The interface an operator actually uses: scene selection, current state
-display, BPM and audio level, output health, and manual overrides. Plus the failure
-behaviour that makes the system trustworthy mid-show. **Authoring** (creating scenes,
-presets, and cue lists) goes through phase 7a / WS-10; phase 8 can start with
-selection-only UI once transport and LEDfx paths exist.
+**Scope.** The interface an operator actually uses: **Performance** mode (scene
+selection, beat indicator) and **Builder** mode (six authoring pages), plus current
+state display, BPM and audio level, output health, and manual overrides. Plus the
+failure behaviour that makes the system trustworthy mid-show. Page-level design:
+[frontend_architecture.md](frontend_architecture.md). Authoring HTTP: phase 7a /
+[authoring.md](authoring.md).
 
 **Exit criteria.**
-- A scene can be selected in one action.
+- Home offers Performance and Builder ([frontend_architecture.md](frontend_architecture.md)).
+- A scene can be selected in one action (Performance grid).
+- Beat indicator flashes on server beat events (manual tap until WS-9).
+- Builder pages cover device presets, looks, both cue lists, and scenes without
+  duplicating graph rules in the client.
 - Audio state (BPM, level, and crucially *silent vs. device failed*) is visible.
 - DMX and LEDfx reachability are visible.
 - A blackout / panic control exists and works regardless of the show state.
@@ -311,9 +321,8 @@ selection-only UI once transport and LEDfx paths exist.
 - *(With WS-11)* Authoring forms use the phase 7a API — no parallel graph logic in
   the client.
 
-**Non-goals.** Full scene editor on day one is acceptable if JSON + phase 7a API
-cover creation; grow into WS-11 forms incrementally. No remote or mobile control.
-No multi-user.
+**Non-goals.** No pixel editor. No live look preview from Builder in v1 (activate via
+Performance). No remote or mobile control. No multi-user.
 
 **Risks.** UI work expanding to fill available time. The operator interface for a
 manually-driven one-room show is small; keep it small.

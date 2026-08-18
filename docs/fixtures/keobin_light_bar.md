@@ -1,5 +1,8 @@
 # Keobin Light Bar
 
+> **Terminology.** A "look" is a `dmx_preset` (`DMX_Preset`). Use `dmx_preset` going
+> forward — [D-023](../decisions.md#d-023-a-look-is-a-dmx_preset).
+
 | | |
 | --- | --- |
 | `DMX_Device.model` | `keobin_light_bar` |

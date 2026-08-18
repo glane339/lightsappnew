@@ -3,6 +3,9 @@
 Show-control application for a lighting rig: DMX over E1.31, WLED via LEDfx, and
 (deferred) ILDA laser output, driven by manually selected, audio-reactive scenes.
 
+> **Terminology.** A "look" is a `dmx_preset` (`DMX_Preset`). Use `dmx_preset` going
+> forward — [D-023](docs/decisions.md#d-023-a-look-is-a-dmx_preset).
+
 **Current state:** persistence layer, beat-driven show-control core, operator HTTP
 server, and an E1.31 sender that frames and transmits real sACN — but stays off until
 `dmx.transport` is set to `"e131"` in the local config, so a fresh install emits
@@ -10,8 +13,9 @@ nothing. Real audio capture is still not implemented; beats are manual. The
 server/runtime layer was independently audited at `acc52a7`
 ([Audit v3](docs/audit_findings.md#audit-v3--operator-server--runtime)):
 **READY WITH MINOR FIXES**. Universe **1** and the switch destination are documented
-and the box **blacks out when packets stop**; unicast vs multicast is unconfirmed and
-no frame has reached the rig. See
+and the box **blacks out when packets stop**; transport mode is **unicast**
+([D-017](docs/decisions.md#d-017-sacn-unicast-versus-multicast)). No frame has
+reached the rig yet. See
 [docs/project_overview.md](docs/project_overview.md).
 
 ## Structure
@@ -25,14 +29,17 @@ no frame has reached the rig. See
   - `ledfx/` — LEDfx HTTP client and scene sync (null by default)
   - `config/` — compile-time defaults that seed persisted `AppConfig`
   - `logging_setup.py` — file + stderr logging into the data-folder `logs/`
-- `frontend/` — no-build operator page (scene buttons + latency readout)
+- `frontend/` — static operator UI (M1 scene picker today; WS-11.2 plan in
+  [docs/frontend_architecture.md](docs/frontend_architecture.md))
 - `tests/` — pytest suite (storage, sequencing, outputs, server; temp data root)
 - `docs/` — architecture documentation ([start here](docs/project_overview.md))
   - `fixtures/` — per-model DMX channel tables ([index](docs/fixtures/README.md))
 - `requirements.txt` — Python dependencies
 - `AGENTS.md` — Instructions for AI coding agents
 
-A `frontend/` directory holds the M1 operator page. The full UI is still WS-11.
+A `frontend/` directory holds the M1 operator page. The full UI (Performance +
+Builder modes) is specified in
+[docs/frontend_architecture.md](docs/frontend_architecture.md) (WS-11.2).
 
 ## Setup
 

@@ -1,33 +1,33 @@
 from __future__ import annotations
 
-from typing import Optional, Tuple
+from typing import Callable, Optional, Sequence, Tuple
 
 from ledfx.client import LedFxClient, LedFxClientProtocol, NullLedFxClient
 from ledfx.scene_sync import LedFxSceneSync
 from storage.config import LedfxConfig
-from storage.library import Library
 
 
 def build_ledfx_stack(
-    library: Library,
-    config: Optional[LedfxConfig] = None,
+    config: LedfxConfig,
+    upsert: Callable[[Sequence[str]], int],
 ) -> Tuple[LedFxClientProtocol, Optional[LedFxSceneSync]]:
     """
     Construct the LEDfx client and optional scene sync from config.
 
-    When ``enabled`` is false, returns a ``NullLedFxClient`` and no sync loop.
+    ``upsert`` is the authoring service's ``upsert_wled_presets`` — the sync thread's
+    only path into storage. When ``enabled`` is false, returns a ``NullLedFxClient``
+    and no sync loop.
     """
-    cfg = config if config is not None else library.config.ledfx
-    if not cfg.enabled:
+    if not config.enabled:
         return NullLedFxClient(), None
 
     client = LedFxClient(
-        base_url=cfg.base_url,
-        timeout_s=cfg.request_timeout_s,
+        base_url=config.base_url,
+        timeout_s=config.request_timeout_s,
     )
     sync = LedFxSceneSync(
-        library=library,
+        upsert=upsert,
         client=client,
-        interval_s=cfg.scene_refresh_s,
+        interval_s=config.scene_refresh_s,
     )
     return client, sync

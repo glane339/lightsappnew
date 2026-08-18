@@ -3,6 +3,9 @@
 What the repository assumes about its environment, what it actually requires, and
 what is currently implicit rather than documented.
 
+> **Terminology.** A "look" is a `dmx_preset` (`DMX_Preset`). Use `dmx_preset` going
+> forward — [D-023](decisions.md#d-023-a-look-is-a-dmx_preset).
+
 > Several assumptions below are **implicit in the code** rather than stated
 > anywhere. They are marked as such. Where an assumption was checked against the
 > machine used for the architecture review, the observation is given with the
@@ -165,13 +168,12 @@ Once `dmx.transport = "e131"` ([roadmap phase 4](roadmap.md#phase-4--reliable-dm
 | Path | Requirement | Notes |
 | --- | --- | --- |
 | E1.31 / sACN out | Outbound UDP, port 5568 | Windows Firewall prompts on first bind — worth pre-approving rather than discovering mid-show |
-| Multicast (if chosen) | IGMP on the LAN | `dmx.mode = "multicast"` sends to `239.255.0.1` for universe 1 and ignores `dmx.host`; set `dmx.bind_address` so it leaves the right NIC. Unicast is recommended for a single receiver — [D-017](decisions.md#d-017-sacn-unicast-versus-multicast) |
+| Unicast | Default for this rig | `dmx.mode = "unicast"` sends to `dmx.host` (switch IP). Multicast remains available via `dmx.mode = "multicast"` for other rigs — [D-017](decisions.md#d-017-sacn-unicast-versus-multicast) |
 | LEDfx | HTTP to the LEDfx host | Typically `127.0.0.1:8888` when LEDfx runs on the same machine |
 
 The application and the lighting hardware must be on the same LAN. Rig addressing:
-**universe 1**, single universe, E1.31 to the **network switch** (static IP from the
-switch manual in local `config.json` only). Unicast/multicast still open; box
-**blackouts when packets stop** —
+**universe 1**, single universe, E1.31 **unicast** to the **network switch** (static IP
+from the switch manual in local `config.json` only). Box **blackouts when packets stop** —
 [fixture_and_transport_strategy.md §6](fixture_and_transport_strategy.md#6-the-custom-universe-box-boundary).
 
 No IPs, hostnames, MAC addresses, or credentials belong in the repository. They go in
@@ -237,7 +239,7 @@ required to develop against the current codebase:
 
 | Hardware | Status |
 | --- | --- |
-| Custom DMX universe box | Opaque endpoint; **universe 1**, switch IP in local config; **blackout on packet stop**; unicast/multicast still open |
+| Custom DMX universe box | Opaque endpoint; **universe 1**, switch IP in local config, **unicast** transport; **blackout on packet stop** |
 | DMX fixtures | [`DMX_Device`](../backend/models/DMX_Device.py) records the patch; channel tables in [docs/fixtures/](fixtures/README.md) |
 | WLED controllers and strips | Managed entirely by LEDfx |
 | Audio interface | Undetermined; see above |

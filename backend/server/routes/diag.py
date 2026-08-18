@@ -2,7 +2,7 @@
 The measurement harness.
 
 ``/api/diag/latency`` reports the ring buffer; ``/api/diag/selftest`` drives the acceptance
-run — 1000 activations with p99 under 10 ms is the M1 gate. The self-test measures the
+run — 1000 activations with p99 under 13 ms is the M1 gate. The self-test measures the
 server-side path only, from command-accepted to packet-sent, so it isolates the server
 from browser and network jitter.
 """
@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field
 
 from server.commands import CommandKind, ShowCommand
 from server.deps import EngineDep
+from server.latency import LATENCY_BUDGET_US
 
 router = APIRouter(prefix="/api/diag", tags=["diag"])
 
@@ -50,9 +51,6 @@ class LatencyResponse(BaseModel):
     p95_us: int
     p99_us: int
     max_us: int
-
-
-BUDGET_US = 10_000
 
 
 @router.get("/latency")
@@ -110,5 +108,5 @@ def selftest(body: SelfTestRequest, engine: EngineDep) -> SelfTestResponse:
         requested=body.count,
         measured=snapshot["count"],
         latency=snapshot,
-        within_budget=bool(snapshot["count"]) and snapshot["p99_us"] <= BUDGET_US,
+        within_budget=bool(snapshot["count"]) and snapshot["p99_us"] <= LATENCY_BUDGET_US,
     )

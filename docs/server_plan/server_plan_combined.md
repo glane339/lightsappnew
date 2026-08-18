@@ -1,14 +1,17 @@
-# Web Server Plan — Combined (uvicorn, sub-10 ms control path)
+# Web Server Plan — Combined (uvicorn, sub-13 ms control path)
 
 This is the merged, authoritative version of `server_plan_1.md`, `server_plan_2.md`, and `server_plan_3.md`. Plans 1 and 2 are word-for-word identical, so there were two distinct designs to reconcile; every conflict between them is resolved here with rationale, and the full reconciliation ledger is in the appendix. All code citations and "already exists" claims were re-verified against the repo before merging.
 
-The plan specifies a single-process uvicorn/FastAPI server on `0.0.0.0:8800` that serves the web UI and drives the existing show-control core (`SceneController`, `Library`, LEDfx client), architected around a ~10 ms software latency budget. It slots into the repo's planned workstreams: WS-10.6 (HTTP API), WS-11 (server/frontend), and parked WS-4 (E1.31).
+> **Terminology.** A "look" is a `dmx_preset` (`DMX_Preset`). Use `dmx_preset` going
+> forward — [D-023](../decisions.md#d-023-a-look-is-a-dmx_preset).
+
+The plan specifies a single-process uvicorn/FastAPI server on `0.0.0.0:8800` that serves the web UI and drives the existing show-control core (`SceneController`, `Library`, LEDfx client), architected around a ~13 ms software latency budget (scene selection → sender). It slots into the repo's planned workstreams: WS-10.6 (HTTP API), WS-11 (server/frontend), and parked WS-4 (E1.31).
 
 ---
 
 ## 1. Latency contract (drives every decision)
 
-- Total budget **25 ms**; 15 ms is allocated to hardware/audio input, leaving **~10 ms for software**: browser click → server → scene activation → E1.31 UDP packet leaving the NIC.
+- Total budget **28 ms**; 15 ms is allocated to hardware/audio input, leaving **13 ms for software**: browser click → server → scene activation → sender (`DmxTransport.send`).
 - The guarantee applies to the **DMX path only**. The WLED path goes through LEDfx (external process, own render pipeline) and is physically outside our control — it is explicitly **best-effort** and kept off the critical path entirely.
 - The 15 ms hardware allowance is an assumption, not a measurement; recorded as such.
 - WiFi operator devices add 2–10 ms of client/network jitter on top of the server-side numbers; wired LAN or localhost is the reference configuration.
@@ -66,7 +69,7 @@ flowchart LR
 - **Send-on-change seam lands in the active classes** (`backend/runtime/active.py`): a module-level `threading.Event` plus a `publish()` helper, with `DmxOutput.apply` routing through it. The universe buffer is already swapped whole rather than mutated in place (`backend/runtime/outputs.py:36-39`), so a reader that grabs one reference can never see a torn frame.
 - **`SenderThread`** does `dirty.wait(timeout=keepalive)`: wakes immediately on change, and re-sends periodically when idle so receivers don't time out (cadence per `docs/fixture_and_transport_strategy.md` §7).
 - **`DmxTransport` interface**, whose only implementation is `NullTransport`. Real E1.31 is not in the tree — it drops in later as one class, reading the existing `DMXConfig` (universe, host, port 5568, priority — currently unread by any transport).
-- Hardware validation stays **gated on finishing wire verification** (unicast/multicast; D-017, transport doc §6). **Universe 1**, single universe, network-switch destination, and **blackout on packet stop** are recorded.
+- Hardware validation stays **gated on end-to-end box sign-off** ([D-017](../decisions.md#d-017-sacn-unicast-versus-multicast): **unicast**). **Universe 1**, single universe, network-switch destination, and **blackout on packet stop** are recorded.
 
 ## 5. WLED path (best-effort)
 
@@ -104,7 +107,7 @@ flowchart LR
 - Windows Firewall: an inbound rule for the chosen port is required for other LAN devices to connect.
 - **Dependencies**, pinned in `requirements.txt` per `AGENTS.md`: `fastapi==0.141.1`, `uvicorn[standard]==0.52.1`, `orjson==3.11.9`. uvloop is Linux-only and skipped on Windows by marker, so the loop is stock asyncio; httptools and websockets come with `[standard]`. Verify pins against the venv at install time.
 
-## 8. Latency budget ledger (software half of the 25 ms)
+## 8. Latency budget ledger (software half of the 28 ms)
 
 Both control paths (WS and REST) funnel through the same show thread, so they share one ledger. Per-stage worst-case estimates:
 
@@ -118,7 +121,7 @@ Both control paths (WS and REST) funnel through the same show thread, so they sh
 | E1.31 packet build + `sendto` | 0.3 ms |
 | **Total (server-side)** | **~3 ms** |
 
-Roughly 3 ms worst case against a 10 ms budget (plan 1/2's coarser 2–3 ms estimate agrees). The remaining headroom absorbs client/network jitter — which WiFi operator devices spend 2–10 ms of.
+Roughly 3 ms worst case against a 13 ms budget (plan 1/2's coarser 2–3 ms estimate agrees). The remaining headroom absorbs client/network jitter — which WiFi operator devices spend 2–10 ms of.
 
 ## 9. Jitter engineering
 
@@ -139,7 +142,7 @@ Measurement is part of the design, not an afterthought:
 
 - `perf_counter_ns()` stamps at **frame-received → dequeued → published → sent**, written into a preallocated ring buffer (no allocation on the hot path).
 - Reported as p50/p95/p99/max via `GET /api/diag/latency`, with a p50/p99 summary in `GET /api/status`.
-- **Acceptance: p99 click→packet-out ≤ 10 ms over 1000 activations, on both the WS and REST paths, on wired LAN/localhost.** The M1 operator page doubles as the measurement harness.
+- **Acceptance: p99 scene selection→sender ≤ 13 ms over 1000 activations, on both the WS and REST paths, on wired LAN/localhost.** The M1 operator page doubles as the measurement harness.
 
 ## 11. File map & new code
 
@@ -155,8 +158,8 @@ Verified against the repo — note that `backend/routes/` and `backend/sender/` 
 
 ## 12. Milestones
 
-- **M1 — server skeleton + control plane + instrumentation (null sender).** App factory, lifespan, ShowThread + command queue, `WS /ws/show` + REST control mirrors, minimal operator page, latency ring buffer, `NullTransport`. The ≤ 10 ms acceptance is measured here (click → publish → null-send).
-- **M2 — E1.31 sender.** Parked. Framing, sockets, and packet tests are not in the tree; the wake loop already lives in M1's `SenderThread`. Lands after wire verification completes (universe **1** and switch IP recorded; unicast/multicast open — D-017, transport doc §6).
+- **M1 — server skeleton + control plane + instrumentation (null sender).** App factory, lifespan, ShowThread + command queue, `WS /ws/show` + REST control mirrors, minimal operator page, latency ring buffer, `NullTransport`. The ≤ 13 ms acceptance is measured here (scene selection → publish → sender).
+- **M2 — E1.31 sender.** Landed in code (WS-4.4). Framing, sockets, and packet tests live in `runtime/e131.py` and `runtime/sender.py`. End-to-end hardware sign-off outstanding. Transport mode: **unicast** ([D-017](../decisions.md#d-017-sacn-unicast-versus-multicast)).
 - **M3 — LEDfx dispatcher wiring.** `AsyncCueOutput` + `WledThread` with latest-wins coalescing; AF2-H01 single-writer fix confirmed.
 - **M4 — authoring API.** CRUD for the ten collections via the WS-10.5 authoring service, plus config endpoints (WS-10.6).
 
@@ -166,7 +169,7 @@ Verified against the repo — note that `backend/routes/` and `backend/sender/` 
 
 - Phase 7a's "no WebSocket yet" non-goal is **overridden** by the latency requirement.
 - Parked WS-4's *symbolic* sender (null transport + send-on-change thread) landed with M1. Packet framing did not.
-- E1.31 transport stays `NullTransport` until wire verification completes (D-017, transport doc §6). Universe **1**, single universe, switch destination in local config are recorded.
+- E1.31 transport defaults to `NullTransport` (D-013); opt-in via `dmx.transport = "e131"` with **unicast** to the switch IP ([D-017](../decisions.md#d-017-sacn-unicast-versus-multicast)). Universe **1**, single universe, switch destination in local config are recorded.
 - The 15 ms hardware allowance is an assumption, not a measurement.
 
 ---

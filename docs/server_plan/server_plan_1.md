@@ -1,10 +1,13 @@
-# Web Server Plan Document (uvicorn, sub-10 ms control path)
+# Web Server Plan Document (uvicorn, sub-13 ms control path)
 
 This document specifies the architecture, routing, and latency engineering for a uvicorn-hosted FastAPI web app serving the lights rig on the LAN. It builds on what already exists (`SceneController`, `Library`, LEDfx client) and slots into the repo's planned workstreams (WS-10.6 HTTP API, WS-11 server/frontend, parked WS-4 E1.31).
 
+> **Terminology.** A "look" is a `dmx_preset` (`DMX_Preset`). Use `dmx_preset` going
+> forward — [D-023](../decisions.md#d-023-a-look-is-a-dmx_preset).
+
 ## Latency framing (drives every decision)
 
-- Total budget 25 ms; user allocates 15 ms to hardware/audio input, leaving **~10 ms for software**: browser click → server → scene activation → E1.31 UDP packet leaving the NIC.
+- Total budget 28 ms; user allocates 15 ms to hardware/audio input, leaving **13 ms for software**: browser click → server → scene activation → sender (`DmxTransport.send`).
 - The guarantee applies to the **DMX path**. The WLED path goes through LEDfx (external process, own render pipeline) and is physically outside our control — it becomes explicitly best-effort and is kept off the critical path entirely.
 - Current code would blow the budget in two places, and the doc calls these out as required changes:
   - `WledOutput.apply` is a synchronous HTTP call (2 s timeout) invoked inside `SceneController.activate()` — must move to a fire-and-forget worker (latest-wins queue).
@@ -40,7 +43,7 @@ Key rules the doc records: no blocking I/O under the show lock or on the event l
 
 - File map for implementation: `backend/main.py` (entry point, WS-11.1), `backend/server/` (app factory, lifespan, `ShowRuntime`), `backend/routes/` (routers — folder already exists), `backend/sender/e131.py` (framing + sender thread — folder already exists).
 - Dependencies: `fastapi`, `uvicorn[standard]` (uvloop auto-excluded on Windows; httptools/websockets included), pinned in `requirements.txt` at install time.
-- E1.31 sender design: hand-rolled packet framing recommended (fixed ~638-byte layout, byte-asserted unit tests per WS-4.4) so the send-on-change wake is fully ours; `sacn` library noted as the alternative. Hardware validation gated on finishing wire verification (D-017, transport doc §6) — universe **1** and switch destination recorded; code lands behind the null default.
-- Instrumentation + acceptance: `perf_counter_ns` spans per hop, rolling p50/p99 in `/api/status`, acceptance = p99 click→packet-out ≤ 10 ms on wired LAN/localhost.
+- E1.31 sender design: hand-rolled packet framing recommended (fixed ~638-byte layout, byte-asserted unit tests per WS-4.4) so the send-on-change wake is fully ours; `sacn` library noted as the alternative. Hardware validation gated on end-to-end box sign-off — universe **1**, switch destination, and **unicast** ([D-017](decisions.md#d-017-sacn-unicast-versus-multicast)) recorded; code lands behind the null default.
+- Instrumentation + acceptance: `perf_counter_ns` spans per hop, rolling p50/p99 in `/api/status`, acceptance = p99 scene selection→sender ≤ 13 ms on wired LAN/localhost.
 - Windows notes: Python 3.12 high-res timers make the keepalive loop and sub-ms waits fine; no uvloop (winloop only if measurements demand).
 - Milestones: M1 server skeleton + control plane + instrumentation (null sender), M2 E1.31 sender, M3 LEDfx dispatcher wiring, M4 authoring API. Recorded deviations from existing docs: phase 7a's "no WebSocket yet" non-goal is overridden by the latency requirement; parked WS-4 lands as code behind null default.

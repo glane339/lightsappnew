@@ -1,5 +1,9 @@
 # Laser (ILDA) and Haze — Status and Safety Boundary
 
+> **Terminology.** A "look" is a `dmx_preset` (`DMX_Preset`). Use `dmx_preset` going
+> forward — [D-023](decisions.md#d-023-a-look-is-a-dmx_preset). This document is about
+> ILDA, not DMX.
+
 > **This document does not certify anything as safe.** It records what the
 > repository contains, what it does not, and what would have to exist before laser
 > output could responsibly be enabled. No legal or regulatory conclusion is offered

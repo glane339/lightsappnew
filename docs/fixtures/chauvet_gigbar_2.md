@@ -1,5 +1,8 @@
 # Chauvet DJ GigBAR 2
 
+> **Terminology.** A "look" is a `dmx_preset` (`DMX_Preset`). Use `dmx_preset` going
+> forward — [D-023](../decisions.md#d-023-a-look-is-a-dmx_preset).
+
 | | |
 | --- | --- |
 | `DMX_Device.model` | `chauvet_gigbar_2` |

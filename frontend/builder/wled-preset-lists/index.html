@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WLED cue lists — Builder</title>
+<link rel="stylesheet" href="/css/app.css">
+</head>
+<body>
+<main id="page">
+  <div class="split">
+    <section class="panel">
+      <h2>WLED cue lists</h2>
+      <div id="library" class="item-list"></div>
+      <div class="actions"><button type="button" id="new-btn">New</button></div>
+    </section>
+    <section class="panel">
+      <div id="banner" class="banner"></div>
+      <form id="form">
+        <label class="field">Id slug
+          <input id="list-id" name="id" placeholder="strip-cycle" autocomplete="off">
+        </label>
+        <label class="field">Beats per iteration
+          <input id="beats" type="number" min="1" step="1" value="1" required>
+        </label>
+        <p class="help">Palette ids are LEDfx scene names. This page polls for names upserted by background sync. Duplicates are allowed; empty lists cannot be saved.</p>
+        <div id="register-wrap" class="panel" style="margin-bottom:12px" hidden>
+          <h2>Register a name</h2>
+          <label class="field">LEDfx scene name
+            <input id="register-name" placeholder="Living Room" autocomplete="off">
+          </label>
+          <button type="button" id="register-btn">Register</button>
+        </div>
+        <div class="cue-cols">
+          <div>
+            <h2>Palette</h2>
+            <div id="palette" class="item-list"></div>
+          </div>
+          <div>
+            <h2>Cue order</h2>
+            <div id="cue-list" class="drag-list"></div>
+          </div>
+        </div>
+        <div class="actions">
+          <button type="submit" class="primary">Save</button>
+          <button type="button" id="delete-btn" class="danger" hidden>Delete</button>
+        </div>
+      </form>
+    </section>
+  </div>
+</main>
+<script>
+window.CUE_LIST_PAGE = {
+  nav: "wled-preset-lists",
+  collection: "wledLists",
+  palette: "wledPresets",
+  idsField: "wled_preset_ids",
+  pollMs: 25000,
+  allowRegister: true
+};
+</script>
+<script src="/js/api.js"></script>
+<script src="/js/chrome.js"></script>
+<script src="/js/drag-list.js"></script>
+<script src="/js/pages/cue-list.js"></script>
+</body>
+</html>

@@ -1,15 +1,19 @@
 """
 The measurement half of the latency requirement.
 
-Samples span command-received to packet-sent, which is the number the ~10 ms budget is
-written against. The ring buffer is preallocated and the hot call is one index write, so
-recording a sample cannot itself become a source of jitter.
+Samples span scene selection (command received on the server) through ``DmxTransport.send``
+returning — the path the operator page and self-test measure. The ring buffer is
+preallocated and the hot call is one index write, so recording a sample cannot itself
+become a source of jitter.
 """
 
 from __future__ import annotations
 
 import threading
 from typing import Dict, List
+
+# p99 ceiling for scene selection → sender, in microseconds (13 ms).
+LATENCY_BUDGET_US = 13_000
 
 # Holds a full acceptance run (1000 activations) with room to spare, so a self-test never
 # overwrites its own samples.

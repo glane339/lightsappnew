@@ -3,6 +3,9 @@
 How a scene runs. Companion to [architecture.md](architecture.md); terminology from
 [project_overview.md](project_overview.md#key-terminology).
 
+> **Terminology.** A "look" is a `dmx_preset` (`DMX_Preset`). Use `dmx_preset` going
+> forward — [D-023](decisions.md#d-023-a-look-is-a-dmx_preset).
+
 > **Status: the core is now implemented.** A scene can be activated and will cycle
 > both its cue lists off a beat stream, sending looks to the DMX universe buffer and
 > LEDfx scenes to the LEDfx API:

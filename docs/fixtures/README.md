@@ -4,6 +4,10 @@ One file per device model, documenting the **maximum-channel DMX mode only**. Ot
 modes are deliberately omitted — the rig runs everything in its widest mode so the
 app has full control of every parameter.
 
+> **Terminology.** A "look" is a `dmx_preset` (`DMX_Preset`). Use `dmx_preset` going
+> forward — [D-023](../decisions.md#d-023-a-look-is-a-dmx_preset). Channel tables here
+> are what those `dmx_device_preset` values *mean*.
+
 These files are the reference for what each channel *means*. The library stores only
 how many channels a device occupies and where it starts
 ([`DMX_Device`](../../backend/models/DMX_Device.py)); per-channel semantics live here,
@@ -68,3 +72,11 @@ Ranges that select a mode, colour, or macro rather than a level.
 Channel numbers are **1-based and relative to the device's start address**, exactly
 as printed in the manual. `DMX_Device.start_address` supplies the offset, so nothing
 here needs to change when a device is re-patched.
+
+## Frontend profiles (WS-11.2)
+
+The planned Builder UI ([frontend_architecture.md](../frontend_architecture.md))
+transcribes these channel tables into static JavaScript profiles under
+`frontend/js/fixtures/` (one file per `DMX_Device.model`). The profiles drive
+section toggles and labelled controls in max-channel mode; the library still stores
+only `channel_values` arrays via `DMX_Device_Preset`.

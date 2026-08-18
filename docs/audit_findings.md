@@ -7,6 +7,10 @@ Where v3 confirms, narrows, or supersedes an earlier finding, that is recorded i
 [§ Reconciliation with Audit v2](#reconciliation-with-audit-v2-at-acc52a7) rather
 than by duplicating the finding.
 
+> **Terminology.** A "look" is a `dmx_preset` (`DMX_Preset`). Use `dmx_preset` going
+> forward — [D-023](decisions.md#d-023-a-look-is-a-dmx_preset). Historical findings
+> below keep their original wording.
+
 ---
 
 # Audit v3 — Operator Server / Runtime
@@ -227,7 +231,7 @@ Two places overstate the measured latency span: the operator page's
 "Click → packet" header ([frontend/index.html](../frontend/index.html) — the
 measurement starts at server-side receive, not the browser click, and ends at
 `NullTransport.send`, where no packet exists; the page's own footnote states the
-true span correctly) and project_overview.md's "sub-10 ms latency
+true span correctly) and project_overview.md's "≤ 13 ms latency
 instrumentation" (lacked the software-path/NullTransport caveat). **Status:**
 the doc half is corrected in this docs pass; the frontend header remains open
 (frontend changes were out of scope for the documentation pass).
@@ -301,7 +305,7 @@ return of `NullTransport.send`. Recorded on the sender thread into a
 lock-guarded 8192-slot ring; percentile math verified correct (linear
 interpolation, sane edge cases; ring holds the 5000-sample self-test maximum).
 
-**Current evidence:** the suite asserts a single activation ack ≤ 10 000 µs and
+**Current evidence:** the suite asserts a single activation ack ≤ 13 000 µs and
 a 50-sample self-test p99 within budget — both passed in this validation run.
 This is **software-path evidence on one machine**, PROVEN within those
 conditions only.
@@ -310,7 +314,7 @@ conditions only.
 parsing before `receive_text` returns, any real UDP send, Ethernet transit, the
 universe box, the physical DMX line (a full 512-slot frame occupies ~23 ms at
 250 kbaud regardless of software speed), fixture processing, visible light.
-The ~10 ms figure is **not** click-to-light, packet-to-fixture, hardware-proven,
+The ~13 ms figure is **not** click-to-light, packet-to-fixture, hardware-proven,
 or end-to-end latency, and must not be quoted as such. Note also F-01 can
 misattribute samples under bursts — fix before using the ledger as E1.31
 acceptance evidence. **For hardware proof:** re-run the self-test with
@@ -370,7 +374,7 @@ guarded but inherently flake-prone on loaded machines; no flakes observed.
 | Claim | Reality | Status |
 | --- | --- | --- |
 | D-011 rationale: "no process lifecycle … no sender for a final frame" | Both now exist; blackout half still unimplemented | Corrected in this docs pass |
-| project_overview.md "sub-10 ms latency instrumentation" | Software path ending at `NullTransport.send` | Corrected in this docs pass |
+| project_overview.md "≤ 13 ms latency instrumentation" | Software path ending at `NullTransport.send` | Corrected in this docs pass |
 | Operator page header "Click → packet" | Span starts at server receive, ends before any packet | **Open** (frontend out of scope for a docs pass) |
 | README/platform_support: env at `venv/`, "3.12 absent locally", "no entry point" | `.venv/` with Python 3.12.10; `backend/main.py` exists | Corrected in this docs pass ([AF2-L03](#af2-l03) partly; AGENTS.md not touched) |
 | Code comment references `docs/server_plan/`; folder was `docs/server plan/` | Folder renamed to `docs/server_plan/` in this docs pass | Corrected (from the docs side) |
@@ -383,7 +387,7 @@ migrations (v1→v4), fixture/address resolution, `SceneController` semantics,
 cue sequencing, DMX active-state generation, scene replacement, operator server,
 REST control, WebSocket control (single client), symbolic sender,
 `NullTransport`, send-on-change signaling, latency tracker/percentile math,
-software-path sub-10 ms latency (this machine, tested conditions), LEDfx HTTP
+software-path ≤ 13 ms latency (this machine, tested conditions), LEDfx HTTP
 client / scene sync / cue dispatch (API level), graceful shutdown (threads,
 resources, logging).
 
@@ -1058,8 +1062,10 @@ destination: `universe = 1 (1..63999)`, `host`, `port = 5568`,
 `priority = 100 (0..200)`, `refresh_hz ≥ 1` — recovered from the previous app's
 config and explicitly documented as **unverified against the box** (the
 `127.0.0.1` host is a placeholder from old testing, and `refresh_hz = 120`
-still exceeds the physical DMX bus — AF-L01 open). Still absent:
-unicast/multicast selection and source name. The recommendation stands: a
+still exceeds the physical DMX bus — AF-L01 open). At audit time, unicast/multicast
+and source name were absent; **later resolved** — `mode` (default `"unicast"`, D-017
+accepted 2026-08-17), `source_name`, and `refresh_hz` default 44 are on `DMXConfig`.
+The recommendation stands: a
 dedicated `backend/output/` sender owning socket + timer, **using the `sacn`
 PyPI library**, with Null (default) / Recording / real implementations.
 
@@ -1340,9 +1346,9 @@ acceptance criteria.
 - **Objective:** `backend/output/` sender interface — Null (default) /
   Recording / `sacn`-backed real; hybrid change+keepalive cadence; blackout on
   clean shutdown; sender thread blocks only on its own timer; finish
-  `DMXConfig` (unicast/multicast, source name; fix `refresh_hz` default to
-  ≤ 44, AF-L01); verify recovered `host`/`port`/`priority` against the box.
-- **Findings addressed:** AF-L01; the transport half of D-017.
+  `DMXConfig` (mode default `"unicast"` per D-017, source name; `refresh_hz`
+  default 44, AF-L01); verify recovered `host`/`port`/`priority` against the box.
+- **Findings addressed:** AF-L01; D-017 (unicast, accepted 2026-08-17).
 - **Dependencies:** P4; sign-off on the `sacn` dependency.
 - **Validation:** `RecordingDmxSender` byte/cadence/sequence assertions with a
   fake clock — no socket in tests. Then the hardware checklist.
@@ -1394,7 +1400,7 @@ software first.
 **E1.31 / universe box (needs the custom box):**
 - [x] Universe number: **1** (single universe rig) — [§6](fixture_and_transport_strategy.md#6-the-custom-universe-box-boundary).
 - [ ] Switch static IP set in local `config.json` as `dmx.host` (from switch manual); port 5568 and priority 100 confirmed on wire.
-- [ ] Unicast accepted (or multicast required).
+- [x] Unicast to switch IP ([D-017](decisions.md#d-017-sacn-unicast-versus-multicast)).
 - [x] Behavior when packets stop: **blackout** — [§6](fixture_and_transport_strategy.md#6-the-custom-universe-box-boundary).
 - [ ] Sustained cadence without coalescing/dropping at the configured rate.
 - [ ] Blackout command produces darkness; clean exit leaves the intended state.

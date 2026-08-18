@@ -1,5 +1,9 @@
 # WLED / LEDfx Architecture
 
+> **Terminology.** A "look" is a `dmx_preset` (`DMX_Preset`). Use `dmx_preset` going
+> forward — [D-023](decisions.md#d-023-a-look-is-a-dmx_preset). WLED has no equivalent
+> object; LEDfx scene names are `WLED_Preset` ids.
+
 > **Status: LEDfx client, scene sync, and WLED cue-list storage exist; no show loop
 > yet.** `backend/ledfx/` talks to LEDfx over HTTP when `ledfx.enabled` is true and
 > can autopopulate `WLED_Preset` rows from scene names. `Preset` references a

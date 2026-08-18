@@ -155,7 +155,9 @@ def test_websocket_pushes_state_and_a_timed_ack(data_root: Path) -> None:
         assert seen["state"]["active_scene_id"] == scene_id
         assert seen["ack"]["id"] == "probe-1"
         # The whole point of the exercise: the round trip is inside the budget.
-        assert 0 <= seen["ack"]["latency_us"] <= 10_000
+        from server.latency import LATENCY_BUDGET_US
+
+        assert 0 <= seen["ack"]["latency_us"] <= LATENCY_BUDGET_US
 
 
 def test_websocket_reports_an_unknown_scene_as_an_error(client: TestClient) -> None:
@@ -174,6 +176,13 @@ def test_websocket_rejects_malformed_frames(client: TestClient) -> None:
 
         socket.send_json({"t": "fly-to-the-moon"})
         assert "unknown message type" in socket.receive_json()["message"]
+
+
+def test_websocket_pushes_a_beat_event(client: TestClient) -> None:
+    with client.websocket_connect("/ws/show") as socket:
+        socket.send_json({"t": "beat"})
+        seen = _await_kinds(socket, {"beat", "state", "ack"})
+        assert seen["beat"] == {"t": "beat"}
 
 
 def test_beat_advances_the_active_scene(data_root: Path) -> None:
@@ -250,6 +259,31 @@ def test_operator_page_is_served_at_the_root(client: TestClient) -> None:
 
     assert response.status_code == 200
     assert "Lights" in response.text
+    assert "Performance" in response.text
+    assert "Builder" in response.text
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/performance/",
+        "/builder/gigbar2/",
+        "/builder/keobin/",
+        "/builder/dmx-presets/",
+        "/builder/dmx-preset-lists/",
+        "/builder/wled-preset-lists/",
+        "/builder/scenes/",
+        "/diag/",
+        "/css/app.css",
+        "/js/api.js",
+        "/js/show.js",
+        "/js/fixtures/chauvet_gigbar_2.js",
+        "/js/fixtures/keobin_light_bar.js",
+    ],
+)
+def test_ws11_static_pages_are_served(client: TestClient, path: str) -> None:
+    response = client.get(path)
+    assert response.status_code == 200, path
 
 
 def _await_kinds(socket, kinds: set) -> dict:

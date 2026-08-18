@@ -3,6 +3,9 @@
 How DMX data is modelled, addressed, held in memory, and (eventually) put on the
 wire. Companion to [architecture.md](architecture.md).
 
+> **Terminology.** A "look" is a `dmx_preset` (`DMX_Preset`). Use `dmx_preset` going
+> forward — [D-023](decisions.md#d-023-a-look-is-a-dmx_preset).
+
 > **Status: model implemented; E1.31 packets absent.** Looks resolve into
 > [`Active_DMX_Channels`](../backend/models/Active_DMX_Channels.py) by patched
 > address. [`runtime/sender.py`](../backend/runtime/sender.py) is a symbolic sender:
@@ -229,33 +232,31 @@ universe are confirmed for this rig** ([§6](#6-the-custom-universe-box-boundary
 `host` must be set to the **network switch static IP** (from the switch manual) in
 local `config.json` before real E1.31 output — not the loopback default below.
 
-What still needs attention:
+What still needs attention for a **fresh install** (production values go in local
+`config.json` only):
 
 | Field | Issue |
 | --- | --- |
-| `host = "127.0.0.1"` | Loopback placeholder from dev/testing. Production: set to the **network switch IP** from the switch manual in local `config.json` ([§6](#6-the-custom-universe-box-boundary)). Unicast/multicast selection is still not expressible. |
-| `interface` | Ambiguous: is this a local NIC to bind to, or a destination? Both are needed and this is one field. |
-| `refresh_hz = 120` | Physical DMX512 tops out near 44 Hz for a full 512-slot frame. 120 Hz of E1.31 traffic cannot be reproduced on the bus and will be coalesced or dropped by the gateway. [AF-L01](audit_findings.md#af-l01) |
+| `host = "127.0.0.1"` | Loopback placeholder from dev/testing. Production: set to the **network switch IP** from the switch manual in local `config.json` ([§6](#6-the-custom-universe-box-boundary)). |
+| `transport = "null"` | Safe default (D-013). Set to `"e131"` only when ready for real output. |
+| `mode = "unicast"` | **Decided** for this rig ([D-017](decisions.md#d-017-sacn-unicast-versus-multicast)). Multicast remains available in code but is not used here. |
 
-Still absent: unicast/multicast selection, source name, and per-universe destination
-mapping. Slot count is deliberately not configurable — it is `UNIVERSE_SIZE`, fixed
-by the protocol, where the old config restated it as `total_channels: 512`.
+Resolved in code: `source_name`, `bind_address`, `refresh_hz` default 44 (was 120;
+[AF-L01](audit_findings.md#af-l01)). Slot count is deliberately not configurable — it
+is `UNIVERSE_SIZE`, fixed by the protocol.
 
-### 5.2 Open transport decisions
+### 5.2 Transport decisions
 
-Each of these needs a recorded decision before code is written. None can be
-answered from the repository.
-
-| Decision | Options | Note |
+| Decision | Status | Note |
 | --- | --- | --- |
-| **Unicast vs multicast** | Unicast to the box's IP; multicast to `239.255.x.y` derived from universe | **Unicast recommended** for a single known receiver on a home LAN: no IGMP snooping concerns, no multicast flooding to unrelated devices, trivially debuggable. Multicast is for rigs with many receivers. |
-| **Destination** | Static IP in config; discovery | Static. Discovery is unnecessary complexity for one box. |
-| **Universe numbering** | Must match the box's expectation | **Verified — universe 1 only** ([§6](#6-the-custom-universe-box-boundary)). |
-| **Cadence** | Continuous at N Hz; on change only; hybrid | **Decided — hybrid** ([D-019](decisions.md#d-019-send-on-change--keepalive-cadence)): implemented in `SenderThread`; keepalive from `DMXConfig.refresh_hz` |
-| **Sequence numbers** | Per-universe `uint8`, incrementing, wrapping | Required by the protocol for out-of-order detection. Must be per universe. |
-| **Priority** | Default 100 | Only matters with multiple sources. Expose it, default it, do not agonise over it. |
-| **Source name** | A stable, human-readable CID/name | Helps enormously when sniffing traffic. Pick one and keep it constant. |
-| **Library vs hand-rolled** | `sacn`, `python-sacn`; or build the packet | A library is the right call — the packet layout, CID handling, and sequence semantics are fiddly and already solved. Adding one is a new production dependency and therefore out of scope for this documentation task. |
+| **Unicast vs multicast** | **Decided — unicast** ([D-017](decisions.md#d-017-sacn-unicast-versus-multicast)) | Unicast to the switch IP. One known receiver on a home LAN: no IGMP snooping, no multicast flooding, trivially debuggable. `mode: "multicast"` remains in code for other rigs. |
+| **Destination** | **Decided — static IP** | Static switch IP in local `config.json`. Discovery is unnecessary for one box. |
+| **Universe numbering** | **Verified — universe 1 only** ([§6](#6-the-custom-universe-box-boundary)) | |
+| **Cadence** | **Decided — hybrid** ([D-019](decisions.md#d-019-send-on-change--keepalive-cadence)) | Implemented in `SenderThread`; keepalive from `DMXConfig.refresh_hz` |
+| **Sequence numbers** | **Decided** | Per-universe `uint8`, incrementing, wrapping — required by the protocol |
+| **Priority** | **Decided — default 100** | Only matters with multiple sources |
+| **Source name** | **Decided — `"Lights App"` default** | On `DMXConfig.source_name`; helps when sniffing traffic |
+| **Library vs hand-rolled** | **Decided — hand-rolled** ([D-020](decisions.md#d-020-hand-rolled-e131-framing)) | In [`runtime/e131.py`](../backend/runtime/e131.py); `sacn` remains the fallback |
 
 ### 5.3 Error handling and shutdown
 
@@ -304,8 +305,8 @@ Config for real output, in the user's local `config.json` only:
 ```
 
 `mode: "multicast"` ignores `host` and sends to the universe's group instead
-(`239.255.0.1` for universe 1), which is the fallback when the box's own address is
-unknown.
+(`239.255.0.1` for universe 1). This rig uses **unicast** only
+([D-017](decisions.md#d-017-sacn-unicast-versus-multicast)).
 
 Full checklist: [current_sprint.md § 4.4](current_sprint.md#44-real-sacn-sender--next-hardware-milestone).
 
@@ -324,6 +325,7 @@ firmware, schematic, or protocol notes live in this repository. Its internals
 | **Universe count** | **1** — entire rig on a single sACN stream | Code assumes one buffer ([`runtime/active.py`](../backend/runtime/active.py)); multi-universe is out of scope |
 | **Universe number** | **1** | `DMXConfig.universe` default; all patched fixtures use universe 1 ([`docs/fixtures/README.md`](fixtures/README.md)) |
 | **E1.31 destination** | **Network switch** (static IP from the switch manual) | `dmx.host` in the user's local `config.json` only — **never committed** ([`paths.py`](../backend/storage/paths.py)) |
+| **Transport mode** | **Unicast** to switch IP | `DMXConfig.mode = "unicast"` ([D-017](decisions.md#d-017-sacn-unicast-versus-multicast)) |
 | **Port** | **5568** (sACN default) | `DMXConfig.port` |
 | **Packet-stop behaviour** | **Blackout** — rig goes dark when sACN packets stop | Confirmed on hardware; aligns with [D-011](decisions.md#d-011-hold-between-scenes-blackout-on-clean-shutdown) shutdown requirement |
 
@@ -332,6 +334,7 @@ Set the switch IP when enabling real output:
 ```json
 "dmx": {
   "universe": 1,
+  "mode": "unicast",
   "host": "<switch-static-ip-from-manual>",
   "port": 5568
 }
@@ -341,8 +344,8 @@ No IP addresses, hostnames, or MAC addresses belong in the repository.
 
 ### Still to verify empirically
 
-1. Does the box require **multicast**, or accept **unicast** to the switch IP?
-   ([D-017](decisions.md#d-017-sacn-unicast-versus-multicast))
+1. One end-to-end activation with `transport = "e131"` — lights respond as expected
+   (WS-4.4 hardware sign-off).
 
 ---
 

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+import threading
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Type, get_args
 
@@ -91,10 +93,28 @@ def _ref_ids(obj: Any, attr: str, is_list: bool) -> List[str]:
 
 def _is_optional_ref(collection: str, attr: str) -> bool:
     """Whether a single-id attribute can hold None, and so can be detached on delete."""
-    field = MODEL_TYPES[collection].model_fields.get(attr)
-    if field is None:
+    model_field = MODEL_TYPES[collection].model_fields.get(attr)
+    if model_field is None:
         return False
-    return type(None) in get_args(field.annotation)
+    return type(None) in get_args(model_field.annotation)
+
+
+@dataclass(frozen=True)
+class DeletePlan:
+    """
+    What deleting one object would do, computed without doing it.
+
+    ``removes`` is the object plus every parent that requires it (transitively) —
+    the same closure a force delete removes. ``detaches`` are the survivors that
+    lose a reference instead: list attributes are filtered, optional single-id
+    attributes become None. Removes are in discovery order, target first.
+    """
+
+    removes: List[Tuple[str, str]] = field(default_factory=list)
+    detaches: List[Tuple[str, str, str]] = field(default_factory=list)
+
+    def would_remove(self, collection: str, obj_id: str) -> bool:
+        return (collection, obj_id) in set(self.removes)
 
 
 class Library:
@@ -110,6 +130,14 @@ class Library:
         self.root = ensure_layout(root)
         migrate(self.root)
         self.config: AppConfig = ensure_config(self.root)
+
+        # Serializes mutation+save sequences across threads (authoring routes on the
+        # FastAPI threadpool, the LEDfx scene-sync thread). It lives here so every
+        # writer to this library shares one lock by construction; the authoring
+        # service is the intended holder. Readers stay lock-free: the show thread
+        # snapshots what it needs at activation, and writers swap list fields rather
+        # than mutating them in place.
+        self.mutation_lock = threading.RLock()
 
         self.scenes: Dict[str, Scene] = {}
         self.presets: Dict[str, Preset] = {}
@@ -395,52 +423,102 @@ class Library:
                 f"{collection} '{obj_id}' is referenced by {listed}; pass force=True to delete it anyway"
             )
 
-        deleted: List[Tuple[str, str]] = []
-        self._delete_cascade(collection, obj_id, deleted, set())
-        if deleted:
-            logger.info(
-                "deleted %s '%s' (force=%s); removed %s",
-                collection,
-                obj_id,
-                force,
-                deleted,
-            )
-        return deleted
+        plan = self.plan_delete(collection, obj_id)
+        self._apply_delete_plan(plan)
+        logger.info(
+            "deleted %s '%s' (force=%s); removed %s",
+            collection,
+            obj_id,
+            force,
+            plan.removes,
+        )
+        return list(plan.removes)
 
-    def _delete_cascade(
-        self,
-        collection: str,
-        obj_id: str,
-        deleted: List[Tuple[str, str]],
-        visiting: Set[Tuple[str, str]],
-    ) -> None:
-        key = (collection, obj_id)
-        if key in visiting or obj_id not in self._maps[collection]:
-            return
-        visiting.add(key)
+    def plan_delete(self, collection: str, obj_id: str) -> DeletePlan:
+        """
+        Compute what deleting an object would remove and detach, without applying it.
 
+        This is the single source of truth for cascade semantics: ``delete`` executes
+        exactly this plan. A required single-id parent joins the removal closure; a
+        list holder or an optional single-id holder survives with the reference
+        detached instead.
+        """
+        if obj_id not in self._maps[collection]:
+            raise KeyError(f"no {collection} with id '{obj_id}'")
+
+        removes: List[Tuple[str, str]] = []
+        closure: Set[Tuple[str, str]] = set()
+        pending: List[Tuple[str, str]] = [(collection, obj_id)]
+        while pending:
+            key = pending.pop(0)
+            if key in closure:
+                continue
+            closure.add(key)
+            removes.append(key)
+            child_collection, child_id = key
+            for parent_collection, refs in REFERENCES.items():
+                for attr, ref_collection, is_list in refs:
+                    if ref_collection != child_collection or is_list:
+                        continue
+                    if _is_optional_ref(parent_collection, attr):
+                        continue
+                    for parent_id, parent in self._maps[parent_collection].items():
+                        if getattr(parent, attr) == child_id:
+                            pending.append((parent_collection, parent_id))
+
+        removed_by_collection: Dict[str, Set[str]] = {}
+        for removed_collection, removed_id in closure:
+            removed_by_collection.setdefault(removed_collection, set()).add(removed_id)
+
+        detaches: List[Tuple[str, str, str]] = []
         for parent_collection, refs in REFERENCES.items():
-            for attr, child_collection, is_list in refs:
-                if child_collection != collection:
+            for attr, ref_collection, is_list in refs:
+                targets = removed_by_collection.get(ref_collection)
+                if not targets:
                     continue
-                for parent_id, parent in list(self._maps[parent_collection].items()):
+                for parent_id, parent in self._maps[parent_collection].items():
+                    if (parent_collection, parent_id) in closure:
+                        continue
                     value = getattr(parent, attr)
                     if is_list:
-                        remaining = [ref_id for ref_id in value if ref_id != obj_id]
-                        if len(remaining) != len(value):
-                            setattr(parent, attr, remaining)
-                    elif value == obj_id:
-                        # An optional parent survives losing this child; a required one
-                        # cannot exist without it and goes too.
-                        if _is_optional_ref(parent_collection, attr):
-                            setattr(parent, attr, None)
-                        else:
-                            self._delete_cascade(parent_collection, parent_id, deleted, visiting)
+                        if any(ref_id in targets for ref_id in value):
+                            detaches.append((parent_collection, parent_id, attr))
+                    elif value in targets:
+                        detaches.append((parent_collection, parent_id, attr))
 
-        self._maps[collection].pop(obj_id, None)
-        deleted.append(key)
-        if collection == ILDA_FRAMES:
-            self._drop_blob(obj_id)
+        return DeletePlan(removes=removes, detaches=detaches)
+
+    def _apply_delete_plan(self, plan: DeletePlan) -> None:
+        removed_by_collection: Dict[str, Set[str]] = {}
+        for removed_collection, removed_id in plan.removes:
+            removed_by_collection.setdefault(removed_collection, set()).add(removed_id)
+
+        ref_specs: Dict[str, Dict[str, Tuple[str, bool]]] = {
+            parent_collection: {attr: (child, is_list) for attr, child, is_list in refs}
+            for parent_collection, refs in REFERENCES.items()
+        }
+
+        for parent_collection, parent_id, attr in plan.detaches:
+            parent = self._maps[parent_collection].get(parent_id)
+            if parent is None:
+                continue
+            child_collection, is_list = ref_specs[parent_collection][attr]
+            if is_list:
+                targets = removed_by_collection.get(child_collection, set())
+                # A fresh list rather than in-place removal, so a lock-free reader
+                # holding the old list keeps a consistent snapshot.
+                setattr(
+                    parent,
+                    attr,
+                    [ref_id for ref_id in getattr(parent, attr) if ref_id not in targets],
+                )
+            else:
+                setattr(parent, attr, None)
+
+        for removed_collection, removed_id in plan.removes:
+            self._maps[removed_collection].pop(removed_id, None)
+            if removed_collection == ILDA_FRAMES:
+                self._drop_blob(removed_id)
 
     def prune_orphans(self) -> Dict[str, List[str]]:
         """
@@ -521,7 +599,7 @@ class Library:
         for frame_id in added:
             self.ilda_frames[frame_id] = ILDA_Frame(id=frame_id)
         for frame_id in vanished:
-            self._delete_cascade(ILDA_FRAMES, frame_id, [], set())
+            self._apply_delete_plan(self.plan_delete(ILDA_FRAMES, frame_id))
 
         report: Dict[str, List[str]] = {}
         if added:

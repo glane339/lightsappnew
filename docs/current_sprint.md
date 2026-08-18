@@ -4,6 +4,9 @@ Near-term implementation plan, grounded in [audit_findings.md](audit_findings.md
 No dates — the repository contains no schedule, and inventing one would be noise.
 Longer horizon in [roadmap.md](roadmap.md).
 
+> **Terminology.** A "look" is a `dmx_preset` (`DMX_Preset`). Use `dmx_preset` going
+> forward — [D-023](decisions.md#d-023-a-look-is-a-dmx_preset).
+
 **Status key:** `Not started` · `In progress` · `Done` · `Blocked`
 
 ## Future plans
@@ -12,10 +15,12 @@ Longer horizon in [roadmap.md](roadmap.md).
 > when work resumes. Current maturity in
 > [project_overview.md](project_overview.md#current-maturity).
 
-> **Updated 2026-08-16.** Universe **1**, single-universe rig, and network-switch
-> destination IP (local `config.json` only) are recorded in
+> **Updated 2026-08-17.** Universe **1**, single-universe rig, network-switch
+> destination IP (local `config.json` only), **unicast** transport
+> ([D-017](decisions.md#d-017-sacn-unicast-versus-multicast)), and **blackout on packet stop**
+> are recorded in
 > [fixture_and_transport_strategy.md §6](fixture_and_transport_strategy.md#6-the-custom-universe-box-boundary).
-> Unicast/multicast remains open (D-017). Packet-stop behaviour verified: **blackout**.
+> Packet-stop behaviour verified: **blackout**.
 >
 > **Server/runtime audit completed 2026-08-13** at `acc52a7`
 > ([Audit v3](audit_findings.md#audit-v3--operator-server--runtime)). Verdict:
@@ -42,25 +47,25 @@ Longer horizon in [roadmap.md](roadmap.md).
 | Operator server M1 (`backend/main.py`, `/ws/show`, REST control, latency) | Done (WS-11.1) |
 | M1 operator page (`frontend/index.html`) | Done |
 | WLED off show thread (`AsyncCueOutput` + worker) | Done (WS-5 wiring in engine) |
-| 116-test suite | Done |
+| Show authoring (`AuthoringService`, typed HTTP, [D-022](decisions.md#d-022-empty-cue-lists-cannot-be-authored)) | Done (WS-10) |
+| 171-test suite | Done |
 | Audit v2 merge + post-audit doc refresh | Done |
 | Server/runtime audit v3 at `acc52a7` — READY WITH MINOR FIXES ([findings F-01…F-15](audit_findings.md#findings-summary)) | Done (fixes **not** implemented) |
 
 ### Build next (dependency order)
 
-1. **Universe box verification (partial)** — universe **1**, one universe, switch IP,
-   and **blackout on packet stop** are recorded in
+1. **Universe box verification** — universe **1**, one universe, switch IP,
+   **unicast** ([D-017](decisions.md#d-017-sacn-unicast-versus-multicast)), and
+   **blackout on packet stop** are recorded in
    [fixture_and_transport_strategy.md §6](fixture_and_transport_strategy.md#6-the-custom-universe-box-boundary).
-   Still measure unicast vs multicast; settle
-   [D-017](decisions.md#d-017-sacn-unicast-versus-multicast); finish WS-4.3
-   config fields (`source_name`, transport mode).
+   WS-4.3 config is complete. Remaining: one activation against the physical box (WS-4.4).
 2. **WS-4.4 · Actual E1.31 sender** — `E131Transport` behind `DmxTransport`; hand-rolled
    framing + byte tests; socket injected in tests; opt-in via config after box sign-off.
    See [WS-4.4](#44-real-sacn-sender) below.
 3. **WS-9 · Real beat detection** — live audio; `ManualBeatSource` stays for tests.
-4. **WS-10 · Show authoring frameworks** — typed create/update; HTTP API; required
-   before full authoring UI.
-5. **WS-11.2 · Full frontend** — replace M1 picker with WS-10 client.
+4. **WS-11.2 · Full frontend** — Performance + Builder UI per
+   [frontend_architecture.md](frontend_architecture.md); thin client of
+   [authoring.md](authoring.md).
 
 Longer arc: [roadmap.md](roadmap.md) phases 4 → 5 → 7 → **7a** → 8.
 
@@ -75,12 +80,13 @@ Longer arc: [roadmap.md](roadmap.md) phases 4 → 5 → 7 → **7a** → 8.
 | ILDA output | WS-7 / phase 9 | Laser path severed; safety gates first |
 | CI workflow | WS-6 / audit P0 | No blocker for local dev |
 
-### Before building frontend or server
+### Before building the full frontend
 
-Read [WS-10](#ws-10--show-authoring-frameworks) first. The UI must not call
-`Library.add()` directly — go through the authoring service (10.5) and HTTP surface
-(10.6). Scene → lighting preset → DMX cue list + WLED cue list is the creation
-hierarchy.
+Read [frontend_architecture.md](frontend_architecture.md) (routes, modes, builder
+pages) and [authoring.md](authoring.md) (HTTP contract). The UI must not call
+`Library.add()` directly — go through the authoring service and HTTP surface. Scene →
+lighting preset → DMX cue list + WLED cue list is the creation hierarchy; the Scenes
+builder page hides the intermediate `Preset` layer.
 
 ---
 
@@ -102,9 +108,8 @@ flowchart LR
 
 WS-6 comes before schema changes deliberately: the storage layer's cascade and
 pruning logic is the code most likely to break under model changes. WS-6.1 is
-**done** ([AF-H05](audit_findings.md#af-h05) partially addressed). WS-10 is the
-authoring layer a frontend or HTTP server will call — it is not started and does
-not block WS-3 through WS-9.
+**done** ([AF-H05](audit_findings.md#af-h05) partially addressed). WS-10 is **done**
+— [authoring.md](authoring.md) is the HTTP contract WS-11.2 will consume.
 
 ---
 
@@ -346,21 +351,22 @@ migratable through `REFERENCES` in [`records.py`](../backend/storage/records.py)
 ### 4.3 Network configuration
 - **Goal.** Reshape `DMXConfig`: unicast/multicast, source name, per-universe
   destinations; fix the `refresh_hz: 120` default.
-- **Partly done.** `universe` (now 1), `host`, `port`, and `priority` exist, recovered
-  from the previous app's config file — universe **1** and switch destination
-  recorded ([§6](fixture_and_transport_strategy.md#6-the-custom-universe-box-boundary));
-  unicast/multicast still open.
+- **Partly done.** `universe` (now 1), `host`, `port`, `priority`, `mode`, `source_name`,
+  `bind_address`, and `transport` exist — universe **1**, switch destination, and
+  **unicast** recorded ([§6](fixture_and_transport_strategy.md#6-the-custom-universe-box-boundary),
+  [D-017](decisions.md#d-017-sacn-unicast-versus-multicast)).
 - **Why.** [AF-M06](audit_findings.md#af-m06), [AF-L01](audit_findings.md#af-l01);
   the current three fields cannot describe a working sACN setup.
-- **Dependencies.** [D-017](decisions.md#d-017-sacn-unicast-versus-multicast), and
-  verification against the actual universe box.
+- **Dependencies.** [D-017](decisions.md#d-017-sacn-unicast-versus-multicast) (accepted:
+  unicast); verification against the actual universe box for end-to-end output.
 - **Acceptance.** Config expresses a complete destination; defaults are valid;
   no IPs or hostnames appear in the repository.
-- **Status.** **Partially verified** — universe **1**, single universe, network
-  switch destination (IP in local `config.json` only), and **blackout on packet stop**
-  are recorded in
+- **Status.** **Done** — universe **1**, single universe, network switch destination
+  (IP in local `config.json` only), **unicast** ([D-017](decisions.md#d-017-sacn-unicast-versus-multicast)),
+  **blackout on packet stop**, and full transport config (`mode`, `source_name`,
+  `bind_address`, `transport`, `refresh_hz` default 44) are in
+  [`storage/config.py`](../backend/storage/config.py) and recorded in
   [fixture_and_transport_strategy.md §6](fixture_and_transport_strategy.md#6-the-custom-universe-box-boundary).
-  Unicast/multicast and source name still open ([D-017](decisions.md#d-017-sacn-unicast-versus-multicast)).
 - **Files.** [`storage/config.py`](../backend/storage/config.py).
 
 ### 4.4 Real sACN sender — **NEXT HARDWARE MILESTONE**
@@ -370,8 +376,8 @@ migratable through `REFERENCES` in [`records.py`](../backend/storage/records.py)
 - **Why.** The latency budget is already measured server-receive → `NullTransport.send`
   (software path only); this adds the UDP `sendto` while keeping the same thread model
   ([D-019](decisions.md#d-019-send-on-change--keepalive-cadence)).
-- **Dependencies.** 4.2 (done), 4.3 (partial — universe 1, switch destination,
-  packet-stop blackout recorded; unicast/multicast open).
+- **Dependencies.** 4.2 (done), 4.3 (done — universe 1, switch destination,
+  unicast, packet-stop blackout recorded).
 - **Audit v3 items to fold in (none implemented yet):**
   [F-01](audit_findings.md#f-01) — fix the ack/latency-ledger pairing *before* the
   ledger is used as acceptance evidence; [F-02](audit_findings.md#f-02) — exception
@@ -399,7 +405,7 @@ migratable through `REFERENCES` in [`records.py`](../backend/storage/records.py)
 - **Acceptance.** Generated bytes asserted in tests without opening a socket;
   sequence numbers increment per universe and wrap; clean shutdown sends blackout
   then closes; a send failure logs and does not take the show down; p99 latency
-  budget still met with real transport enabled.
+  budget (13 ms scene selection → sender) still met with real transport enabled.
 - **Status.** **Code landed 2026-08-16, unverified on hardware.**
   [`runtime/e131.py`](../backend/runtime/e131.py) frames 638-byte DATA packets;
   `E131Transport` in [`runtime/sender.py`](../backend/runtime/sender.py) sends them
@@ -408,8 +414,8 @@ migratable through `REFERENCES` in [`records.py`](../backend/storage/records.py)
   exception guard), [F-05](audit_findings.md#f-05) (blackout before close, both in
   `E131Transport.close()` and `engine.stop()`), [F-10](audit_findings.md#f-10)
   (self-test refuses a live transport), [F-15](audit_findings.md#f-15) (`refresh_hz`
-  default 120 → 44). **Remaining:** [F-01](audit_findings.md#f-01) ack-ledger pairing,
-  unicast/multicast confirmation, and one activation against the physical box.
+  default 120 → 44). **Remaining:** [F-01](audit_findings.md#f-01) ack-ledger pairing
+  and one activation against the physical box.
 - **Files.** [`backend/runtime/e131.py`](../backend/runtime/e131.py) (new),
   [`backend/runtime/sender.py`](../backend/runtime/sender.py),
   [`backend/storage/config.py`](../backend/storage/config.py),
@@ -548,25 +554,26 @@ migratable through `REFERENCES` in [`records.py`](../backend/storage/records.py)
 - **Files.** [`platform_support.md`](platform_support.md), [`README.md`](../README.md).
 
 ### 8.2 Keep decisions current
-- **Goal.** Move D-016, D-017, D-018 from Open to Accepted as they are answered.
+- **Goal.** Move D-016 from Open to Accepted when answered.
 - **Why.** Three open decisions block WS-3, WS-4, and WS-5 respectively.
 - **Dependencies.** The corresponding investigations.
 - **Acceptance.** No Open decision blocks an in-progress workstream.
-- **Status.** D-018 **Accepted**. D-016 and D-017 remain Open.
+- **Status.** D-018 **Accepted**. D-017 **Accepted** (unicast). D-016 remains Open.
 - **Files.** [`decisions.md`](decisions.md).
 
 ---
 
 ## WS-10 · Show authoring frameworks
 
-> **Not started.** [`Library`](../backend/storage/library.py) already supports
-> `add()`, `get()`, and `delete()` per collection, but there is no typed layer for
-> building the show graph from a UI or HTTP server. Raw `Library` calls require
-> knowing `COLLECTION_ORDER`, forward-reference rules, and cascade semantics —
-> easy to get wrong from a frontend. WS-10 is that layer.
+> **Done.** [`AuthoringService`](../backend/authoring/service.py) owns typed
+> create/update/delete for the show graph. HTTP is in
+> [`backend/server/routes/scenes.py`](../backend/server/routes/scenes.py) and
+> [`backend/server/routes/authoring.py`](../backend/server/routes/authoring.py).
+> Contract: [authoring.md](authoring.md). Empty cue lists cannot be authored
+> ([D-022](decisions.md#d-022-empty-cue-lists-cannot-be-authored)).
 
 Depends on WS-2 (model) and WS-3 (semantics of `beats` and scene activation).
-Blocks WS-11 (frontend and HTTP server).
+Blocks WS-11.2 (full frontend). The M1 operator server (WS-11.1) already exists.
 
 ### 10.1 DMX cue list creation framework
 - **Goal.** Create, update, reorder, and validate `DMX_Preset_List` objects: ordered
@@ -578,8 +585,9 @@ Blocks WS-11 (frontend and HTTP server).
 - **Acceptance.** A caller can create a list from an ordered id sequence; reorder
   and replace entries; get a clear error when a referenced `DMX_Preset` is missing;
   round-trip through save/load; tests use a temp `Library` root only.
-- **Status.** Not started.
-- **Files.** new `backend/authoring/` (or `backend/services/`), tests alongside.
+- **Status.** **Done.**
+- **Files.** [`backend/authoring/service.py`](../backend/authoring/service.py),
+  [`tests/test_authoring.py`](../tests/test_authoring.py).
 
 ### 10.2 WLED cue list creation framework
 - **Goal.** Same as 10.1 for `WLED_Preset_List`: ordered `wled_preset_ids`, `beats`,
@@ -588,8 +596,9 @@ Blocks WS-11 (frontend and HTTP server).
 - **Dependencies.** 10.1 pattern; WS-2.3; WS-5 when live LEDfx sync is wired.
 - **Acceptance.** Parallel API shape to 10.1; rejects empty lists and dangling preset
   ids; tests cover reorder and beats update.
-- **Status.** Not started.
-- **Files.** `backend/authoring/`, tests.
+- **Status.** **Done.**
+- **Files.** [`backend/authoring/service.py`](../backend/authoring/service.py),
+  [`tests/test_authoring.py`](../tests/test_authoring.py).
 
 ### 10.3 Lighting preset creation framework
 - **Goal.** Create or update a `Preset` that pairs one DMX cue list with one WLED cue
@@ -600,8 +609,9 @@ Blocks WS-11 (frontend and HTTP server).
 - **Acceptance.** Atomic create: both lists exist and are referenced before save;
   update can swap either list id; delete refuses or returns cascade plan when scenes
   reference the preset ([AF-H04](audit_findings.md#af-h04)).
-- **Status.** Not started.
-- **Files.** `backend/authoring/`, tests.
+- **Status.** **Done.**
+- **Files.** [`backend/authoring/service.py`](../backend/authoring/service.py),
+  [`tests/test_authoring.py`](../tests/test_authoring.py).
 
 ### 10.4 Scene creation framework
 - **Goal.** Create, update, and list `Scene` objects: `preset_id`, `sensitivity`
@@ -613,8 +623,9 @@ Blocks WS-11 (frontend and HTTP server).
 - **Acceptance.** Create scene with bounded sensitivity; reject missing preset;
   reject preset whose cue lists are empty (same rules as `SceneController.activate`);
   list and fetch for UI tables; update sensitivity without touching sequence state.
-- **Status.** Not started.
-- **Files.** `backend/authoring/`, tests.
+- **Status.** **Done.**
+- **Files.** [`backend/authoring/service.py`](../backend/authoring/service.py),
+  [`tests/test_authoring.py`](../tests/test_authoring.py).
 
 ### 10.5 Authoring service owner
 - **Goal.** One module (or small package) that owns all `Library` mutations from
@@ -626,9 +637,12 @@ Blocks WS-11 (frontend and HTTP server).
 - **Acceptance.** All authoring operations go through one entry type; exposes
   `plan_delete()` (or equivalent) before destructive deletes; no route handler or UI
   code calls `Library.add()` directly; unit tests cover error mapping.
-- **Status.** Not started.
-- **Files.** `backend/authoring/`, [`storage/library.py`](../backend/storage/library.py)
-  (read-only integration).
+- **Status.** **Done.** LEDfx scene sync upserts through `upsert_wled_presets` on the
+  same `AuthoringService` instance (F-06 / AF2-H01).
+- **Files.** [`backend/authoring/service.py`](../backend/authoring/service.py),
+  [`storage/library.py`](../backend/storage/library.py) (`mutation_lock`),
+  [`backend/server/engine.py`](../backend/server/engine.py),
+  [`backend/server/app.py`](../backend/server/app.py).
 
 ### 10.6 HTTP API surface
 - **Goal.** REST (or equivalent) endpoints for scenes, lighting presets, and both cue
@@ -640,8 +654,13 @@ Blocks WS-11 (frontend and HTTP server).
   validation and `StorageError`; OpenAPI or documented request/response shapes;
   integration tests against an in-memory or temp-root server; no auth scope in v1
   (single-operator LAN).
-- **Status.** Not started.
-- **Files.** new `backend/server/` or `backend/api/`, tests.
+- **Status.** **Done.** Typed routes (not generic collection CRUD). Looks and WLED
+  names included so a scene can be created from an empty library; devices stay
+  read-only.
+- **Files.** [`backend/server/routes/scenes.py`](../backend/server/routes/scenes.py),
+  [`backend/server/routes/authoring.py`](../backend/server/routes/authoring.py),
+  [`backend/server/errors.py`](../backend/server/errors.py),
+  [`tests/test_authoring_api.py`](../tests/test_authoring_api.py).
 
 ### 10.7 Frontend integration contract
 - **Goal.** Document the DTOs and flows the `frontend/` app will use: list views,
@@ -651,17 +670,18 @@ Blocks WS-11 (frontend and HTTP server).
 - **Dependencies.** 10.6 draft shapes stable enough to document.
 - **Acceptance.** Doc section (or OpenAPI) lists every endpoint, field, and error
   code; example payloads for “create DMX cue list”, “create preset from two lists”,
-  “create scene”; notes which ids are user-visible names vs opaque hex.
-- **Status.** Not started.
-- **Files.** `docs/` (authoring section or extension to
-  [architecture.md](architecture.md)); generated or hand-written API doc from 10.6.
+  “create scene”; notes which ids are user-visible names vs opaque hex. Page-level UI
+  plan in [frontend_architecture.md](frontend_architecture.md).
+- **Status.** **Done.**
+- **Files.** [authoring.md](authoring.md), [frontend_architecture.md](frontend_architecture.md).
 
 ---
 
 ## WS-11 · Frontend and HTTP server
 
 > **M1 landed (2026-08-13).** Entry point, control plane, latency harness, and a
-> no-build operator page exist. Full authoring UI (11.2) still depends on WS-10.
+> no-build operator page exist. Full authoring UI (11.2) can now consume
+> [authoring.md](authoring.md).
 
 ### 11.1 App entry point and process lifecycle
 - **Goal.** A runnable process: open `Library`, `configure_logging()`, wire
@@ -669,16 +689,39 @@ Blocks WS-11 (frontend and HTTP server).
 - **Dependencies.** WS-3.
 - **Acceptance.** `python backend/main.py` serves on `0.0.0.0:8800`; WebSocket
   `/ws/show` and REST `/api/show/*` drive the show thread; sender uses
-  `NullTransport`; latency ring buffer exposed at `/api/diag/latency`.
+  `NullTransport`; latency ring buffer exposed at `/api/diag/latency`; p99 scene
+  selection → sender ≤ 13 ms (`LATENCY_BUDGET_US` in [`server/latency.py`](../backend/server/latency.py)).
 - **Status.** **Done** — [`backend/main.py`](../backend/main.py),
   [`backend/server/`](../backend/server/).
 - **Files.** [`backend/main.py`](../backend/main.py), [`backend/server/app.py`](../backend/server/app.py),
   [`backend/server/engine.py`](../backend/server/engine.py).
 
 ### 11.2 Frontend application
-- **Goal.** `frontend/` client consuming WS-10.6/10.7: scene list, scene select,
-  authoring forms for cue lists / presets / scenes.
-- **Dependencies.** WS-10 complete.
-- **Status.** Not started.
+- **Goal.** Replace M1 with two modes ([frontend_architecture.md](frontend_architecture.md)):
+  **Performance** (scene grid + beat indicator on `/ws/show`) and **Builder** (six
+  authoring pages over the REST API).
+- **Why.** M1 is a latency harness with a scene picker; the operator needs fixture-aware
+  editors and a show surface that stays simple during performance.
+- **Dependencies.** WS-10 complete ([authoring.md](authoring.md)); fixture channel
+  tables in [docs/fixtures/](fixtures/README.md) transcribed into
+  `frontend/js/fixtures/`.
+- **Acceptance.**
+  - Home offers Performance and Builder; Builder sidebar follows leaf-to-root order.
+  - GigBAR and Keobin pages save `DMX_Device_Preset` rows using section toggles in
+    max-channel mode (`23CH` / `18CH`), not raw channel sliders.
+  - dmx_presets page pairs one GigBAR and one Keobin device preset per look.
+  - Both cue-list pages support drag-and-drop reorder and list-level `beats`.
+  - WLED cue-list palette reflects registered LEDfx names (poll + background sync).
+  - Scenes page pairs two cue lists and creates/finds the hidden `Preset` automatically.
+  - Performance activates scenes over WebSocket; beat bar flashes on server beat events.
+  - No graph logic duplicated in JavaScript; all mutations via authoring routes.
+  - M1 latency readout moved to `/diag/` or removed from the show path.
+- **Backend gaps (fold into 11.2 or immediately before Performance beat UI):**
+  `{t:"beat"}` on `/ws/show`; optional `POST /api/ledfx/refresh`; optional scene
+  save helper that accepts two cue-list ids.
+- **Status.** **Planned** — [frontend_architecture.md](frontend_architecture.md)
+  written 2026-08-17; code not started.
+- **Files.** [frontend_architecture.md](frontend_architecture.md);
+  `frontend/` (multi-page static client); see plan for tree.
 
 ---

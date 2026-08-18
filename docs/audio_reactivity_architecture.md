@@ -1,5 +1,8 @@
 # Audio Reactivity Architecture
 
+> **Terminology.** A "look" is a `dmx_preset` (`DMX_Preset`). Use `dmx_preset` going
+> forward — [D-023](decisions.md#d-023-a-look-is-a-dmx_preset).
+
 > **Status: the boundary exists; the signal processing does not.**
 > [`audio/beat_source.py`](../backend/audio/beat_source.py) defines the `BeatSource`
 > protocol that everything downstream consumes, plus `ManualBeatSource`, which emits

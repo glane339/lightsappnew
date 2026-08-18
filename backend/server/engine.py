@@ -18,6 +18,7 @@ import threading
 import time
 from typing import Any, Dict, Optional, Tuple
 
+from authoring.service import AuthoringService
 from ledfx.client import LedFxClientProtocol
 from ledfx.service import build_ledfx_stack
 from runtime.active import publish_count
@@ -76,6 +77,7 @@ class ShowEngine:
         config: AppConfig,
         *,
         transport: Optional[DmxTransport] = None,
+        authoring: Optional[AuthoringService] = None,
     ) -> None:
         self._library = library
         self._config = config
@@ -85,7 +87,10 @@ class ShowEngine:
         self._latency = LatencyTracker()
 
         self._transport = transport if transport is not None else build_transport(config.dmx)
-        self._ledfx_client, self._ledfx_sync = build_ledfx_stack(library, config.ledfx)
+        self._authoring = authoring if authoring is not None else AuthoringService(library)
+        self._ledfx_client, self._ledfx_sync = build_ledfx_stack(
+            config.ledfx, self._authoring.upsert_wled_presets
+        )
 
         self._dmx_output = DmxOutput(library)
         self._wled_worker = WledOutput(self._ledfx_client)
@@ -263,6 +268,11 @@ class ShowEngine:
             logger.exception("unhandled failure running %s", command.kind.value)
             self._reject(command, f"{type(exc).__name__}: {exc}", warn=False)
             return
+
+        if command.kind is CommandKind.BEAT:
+            # Performance flashes from this event, whether the beat was a manual tap or
+            # (later) the audio thread — the client must not care about the source.
+            self._emit(ShowEvent("beat", {}))
 
         if publish_count() == frames_before:
             # Nothing reached the wire — a deactivate, or a beat mid-cue. There is no

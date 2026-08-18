@@ -1,9 +1,17 @@
 # Session Handoff
 
+> **Terminology.** A "look" is a `dmx_preset` (`DMX_Preset`). Use `dmx_preset` going
+> forward — [D-023](decisions.md#d-023-a-look-is-a-dmx_preset).
+
 > **Historical (2026-03).** The sections below document the architecture-review
 > session that created the initial `docs/` set at commit `691062e`.
 >
-> **Latest session (2026-08-13)** — operator server M1, symbolic DMX sender, and doc
+> **Latest session (2026-08-17)** — WS-11.2 frontend plan written in
+> [frontend_architecture.md](frontend_architecture.md) (Performance + Builder modes,
+> six builder pages, fixture editors). Cross-linked from sprint, authoring, roadmap,
+> and architecture docs. No frontend code yet.
+>
+> **Session (2026-08-13)** — operator server M1, symbolic DMX sender, and doc
 > refresh for current status. Source added under `backend/server/`, `backend/main.py`,
 > `frontend/index.html`, `backend/runtime/sender.py` (symbolic). **Next hardware work:**
 > universe-box verification, then WS-4.4 `E131Transport`. Pick up from
@@ -176,7 +184,7 @@ backport with no purpose here — see [AF-L02](audit_findings.md#af-l02).
 
 | Blocker | Blocks | Notes |
 | --- | --- | --- |
-| DMX universe box — partial | E1.31 transport (WS-4.3, WS-4.4) | **Universe 1**, single universe, network-switch destination (IP in local `config.json`), and **blackout on packet stop** are recorded ([§6](fixture_and_transport_strategy.md#6-the-custom-universe-box-boundary)). Unicast vs multicast still **must be measured on the wire**. |
+| DMX universe box — partial | E1.31 transport (WS-4.4) | **Universe 1**, single universe, network-switch destination (IP in local `config.json`), **unicast** ([D-017](decisions.md#d-017-sacn-unicast-versus-multicast)), and **blackout on packet stop** are recorded ([§6](fixture_and_transport_strategy.md#6-the-custom-universe-box-boundary)). Remaining: one end-to-end activation on the wire. |
 | LEDfx preset identifier form unknown | The WLED schema change (WS-2.3) | Which LEDfx entity, what identifier form, and whether it is stable across restarts. [D-018](decisions.md#d-018-ledfx-preset-identifier-form) |
 | Sensitivity semantics undefined | Any audio work | Range, direction, and the relationship to `AudioConfig.default_sensitivity`. [AF-M02](audit_findings.md#af-m02) |
 | Audio event delivery undecided | Threading design | Callback vs. queue. [D-016](decisions.md#d-016-audio-event-delivery-mechanism) |

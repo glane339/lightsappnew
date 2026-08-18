@@ -2,12 +2,9 @@ from __future__ import annotations
 
 import logging
 import threading
-from typing import Optional
+from typing import Callable, Optional, Sequence
 
 from ledfx.client import LedFxClientProtocol, LedFxError
-from models.WLED_Preset import WLED_Preset
-from storage.library import Library
-from storage.records import WLED_PRESETS
 
 logger = logging.getLogger(__name__)
 
@@ -18,17 +15,22 @@ class LedFxSceneSync:
 
     ``WLED_Preset.id`` is the LEDfx scene name. Scenes that disappear from LEDfx are
     left in storage (no auto-delete — cue lists may still reference them).
+
+    This thread never touches the ``Library`` directly (F-06 / AF2-H01): the names it
+    finds go through the authoring service's ``upsert_wled_presets``, which serializes
+    with every other library writer on one lock. The HTTP poll itself runs outside
+    that lock, so a slow LEDfx never stalls authoring.
     """
 
     def __init__(
         self,
-        library: Library,
+        upsert: Callable[[Sequence[str]], int],
         client: LedFxClientProtocol,
         interval_s: float = 25.0,
     ) -> None:
         if interval_s <= 0:
             raise ValueError("interval_s must be positive")
-        self._library = library
+        self._upsert = upsert
         self._client = client
         self._interval_s = interval_s
         self._stop = threading.Event()
@@ -59,7 +61,7 @@ class LedFxSceneSync:
 
     def refresh_once(self) -> int:
         """
-        Fetch scenes from LEDfx and add any names not already in the library.
+        Fetch scenes from LEDfx and register any names not already in the library.
 
         Returns the number of presets added. On LEDfx failure, leaves storage
         untouched and returns 0.
@@ -71,15 +73,8 @@ class LedFxSceneSync:
                 logger.warning("LEDfx scene refresh skipped: %s", exc)
                 return 0
 
-            added = 0
-            for scene in scenes:
-                if self._library.contains(WLED_PRESETS, scene.name):
-                    continue
-                self._library.add(WLED_Preset(id=scene.name))
-                added += 1
-
+            added = self._upsert([scene.name for scene in scenes])
             if added:
-                self._library.save()
                 logger.info("Added %d LEDfx scene(s) to wled_presets", added)
             return added
 

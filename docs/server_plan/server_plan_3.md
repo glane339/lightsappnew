@@ -1,6 +1,9 @@
-# Web Server Plan Document (uvicorn, sub-10 ms control path)
+# Web Server Plan Document (uvicorn, sub-13 ms control path)
 
-Design a single-process uvicorn/FastAPI server on 0.0.0.0:8800 that serves the web UI and drives the existing show-control core, architected around a ~10 ms software latency budget.
+Design a single-process uvicorn/FastAPI server on 0.0.0.0:8800 that serves the web UI and drives the existing show-control core, architected around a ~13 ms software latency budget (scene selection → sender).
+
+> **Terminology.** A "look" is a `dmx_preset` (`DMX_Preset`). Use `dmx_preset` going
+> forward — [D-023](../decisions.md#d-023-a-look-is-a-dmx_preset).
 
 ## Deliverable
 
@@ -61,7 +64,7 @@ Threads: `MainThread` (event loop), `ShowThread`, `SenderThread`, `WledThread`, 
 - `GET|PATCH /api/config`, `GET /api/health`
 - `GET /api/diag/latency`, `POST /api/diag/selftest`
 
-## Latency budget (software half of the 25 ms)
+## Latency budget (software half of the 28 ms)
 
 Both paths funnel through the same show thread, so they share one ledger. Per-stage estimates, worst case:
 
@@ -72,9 +75,9 @@ Both paths funnel through the same show thread, so they share one ledger. Per-st
 - Publish + sender wake: 1.0 ms
 - Packet build + `sendto`: 0.3 ms
 
-Roughly 3 ms worst case against a 10 ms budget. The remaining headroom absorbs jitter, which is where the tuning goes: `sys.setswitchinterval(0.001)`, `gc.freeze()` after startup with relaxed thresholds, `ORJSONResponse` as the default to keep the loop short, `timeBeginPeriod(1)` on Windows, raised thread priority for the show and sender threads, and verifying `TCP_NODELAY` on accepted sockets (Nagle would add up to 40 ms on its own).
+Roughly 3 ms worst case against a 13 ms budget. The remaining headroom absorbs jitter, which is where the tuning goes: `sys.setswitchinterval(0.001)`, `gc.freeze()` after startup with relaxed thresholds, `ORJSONResponse` as the default to keep the loop short, `timeBeginPeriod(1)` on Windows, raised thread priority for the show and sender threads, and verifying `TCP_NODELAY` on accepted sockets (Nagle would add up to 40 ms on its own).
 
-Measurement is part of the design, not an afterthought: `perf_counter_ns()` stamps at frame-received, dequeued, published, and sent, into a preallocated ring buffer, reported as p50/p95/p99/max. Acceptance is p99 under 10 ms over 1000 activations on both paths.
+Measurement is part of the design, not an afterthought: `perf_counter_ns()` stamps at frame-received, dequeued, published, and sent, into a preallocated ring buffer, reported as p50/p95/p99/max. Acceptance is p99 under 13 ms over 1000 activations on both paths.
 
 ## New files the doc specifies
 
@@ -83,5 +86,5 @@ Measurement is part of the design, not an afterthought: `perf_counter_ns()` stam
 ## Open items the doc will flag
 
 - Real audio capture and beat detection (WS-9) is out of scope; the plan leaves the command queue as the seam so a WASAPI-loopback source drops in.
-- E1.31 transport stays `NullTransport` until wire verification completes (D-017, transport doc §6).
+- E1.31 transport stays `NullTransport` by default (D-013); opt-in via `dmx.transport = "e131"` with **unicast** to the switch IP ([D-017](../decisions.md#d-017-sacn-unicast-versus-multicast)).
 - The 15 ms hardware allowance is an assumption, not a measurement; the doc records it as such.
