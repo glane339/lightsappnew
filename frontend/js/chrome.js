@@ -15,6 +15,7 @@
       { href: "/performance/", id: "performance", label: "Performance" },
       { href: "/builder/gigbar2/", id: "builder", label: "Builder" },
       { href: "/diag/", id: "diag", label: "Diag" },
+      { href: "/about/", id: "about", label: "About" },
     ]
       .map(function (link) {
         var current = link.id === mode ? " current" : "";
@@ -27,7 +28,10 @@
     var bar = document.createElement("header");
     bar.className = "topbar";
     bar.innerHTML =
-      '<a href="/" style="color:inherit;text-decoration:none"><h1>Lights</h1></a>' +
+      '<a class="brand" href="/">' +
+      '<span class="brand-mark">Lights</span>' +
+      '<span class="brand-sub">bsmt-01</span>' +
+      "</a>" +
       (extra || "") +
       "<nav>" +
       topLinks(mode) +
@@ -148,6 +152,7 @@
   global.LightsChrome = {
     mountHome: function () {
       document.body.classList.add("mode-home");
+      mountTopbar("home");
     },
     mountBuilder: mountBuilder,
     mountPerformance: function () {
@@ -156,7 +161,11 @@
       conn.id = "conn";
       conn.className = "conn";
       conn.textContent = "connecting…";
-      mountTopbar("performance", conn.outerHTML);
+      var bar = mountTopbar("performance", conn.outerHTML);
+      var beat = document.getElementById("beat-bar");
+      if (beat && beat.parentNode === document.body) {
+        document.body.insertBefore(beat, bar);
+      }
     },
     mountDiag: function () {
       document.body.classList.add("mode-diag");
@@ -165,6 +174,10 @@
       conn.className = "conn";
       conn.textContent = "connecting…";
       mountTopbar("diag", conn.outerHTML);
+    },
+    mountAbout: function () {
+      document.body.classList.add("mode-about");
+      mountTopbar("about");
     },
     banner: banner,
     shortId: shortId,

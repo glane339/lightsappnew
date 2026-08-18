@@ -8,19 +8,26 @@
 </head>
 <body>
 <div class="home">
-  <h1>Lights</h1>
-  <p class="home-lead">Pick a mode. Performance runs the show. Builder authors it.</p>
+  <div class="home-hero">
+    <h1>Lights</h1>
+    <span class="home-kicker">bsmt-01 · universe 1</span>
+  </div>
+  <p class="home-lead">Pick a station. Performance runs the show. Builder authors it.</p>
   <div class="home-choices">
     <a class="home-choice" href="/performance/">
+      <span class="tag">live</span>
       <h2>Performance</h2>
       <p>Select and activate scenes. Beat indicator lives here.</p>
     </a>
     <a class="home-choice" href="/builder/gigbar2/">
+      <span class="tag">author</span>
       <h2>Builder</h2>
       <p>Device presets, dmx_presets, cue lists, then scenes.</p>
     </a>
   </div>
-  <p class="home-foot"><a href="/diag/">Diagnostics — latency harness</a></p>
+  <p class="home-foot">unicast · blackout when in doubt · <a href="/about/">about</a></p>
 </div>
+<script src="/js/chrome.js"></script>
+<script>LightsChrome.mountHome();</script>
 </body>
 </html>

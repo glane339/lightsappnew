@@ -1,129 +1,86 @@
 "use strict";
 
 (function (global) {
-  function opt(min, max, label, extra) {
-    var option = { min: min, max: max, label: label };
-    if (extra) {
-      Object.keys(extra).forEach(function (key) {
-        option[key] = extra[key];
+  function parModes(r, g, b, uv, dim) {
+    function look(id, label, accent, rv, gv, bv, uvv, dv, group) {
+      var mode = { id: id, label: label, accent: accent, channels: {} };
+      mode.channels[r] = rv;
+      mode.channels[g] = gv;
+      mode.channels[b] = bv;
+      mode.channels[uv] = uvv;
+      mode.channels[dim] = dv;
+      if (group) {
+        mode.group = group;
+      }
+      return mode;
+    }
+    return [
+      look("off", "Off", "", 0, 0, 0, 0, 0),
+      look("red", "Red", "red", 255, 0, 0, 0, 79),
+      look("green", "Green", "green", 0, 255, 0, 0, 79),
+      look("blue", "Blue", "blue", 0, 0, 255, 0, 79),
+      look("uv", "UV", "uv", 0, 0, 0, 255, 79),
+      look("red_strobe", "R Strobe", "red", 255, 0, 0, 0, 249, "Strobe"),
+      look("green_strobe", "G Strobe", "green", 0, 255, 0, 0, 249, "Strobe"),
+      look("blue_strobe", "B Strobe", "blue", 0, 0, 255, 0, 249, "Strobe"),
+      look("uv_strobe", "UV Strobe", "uv", 0, 0, 0, 255, 249, "Strobe"),
+    ];
+  }
+
+  function derbyModes(colour, strobe, rotation) {
+    var colours = [
+      ["red", "R", "red", 49],
+      ["green", "G", "green", 74],
+      ["blue", "B", "blue", 99],
+      ["rg", "RG", "mixed", 124],
+      ["rb", "RB", "mixed", 149],
+      ["gb", "GB", "mixed", 174],
+      ["rgb", "RGB", "mixed", 199],
+    ];
+    var spins = [
+      ["cw", "CW", 127],
+      ["cc", "CC", 255],
+    ];
+    var off = { id: "off", label: "Off", channels: {} };
+    off.channels[colour] = 0;
+    off.channels[strobe] = 0;
+    off.channels[rotation] = 0;
+    var modes = [off];
+
+    function add(id, label, accent, cv, sv, rv, group) {
+      var mode = { id: id, label: label, accent: accent, channels: {} };
+      mode.channels[colour] = cv;
+      mode.channels[strobe] = sv;
+      mode.channels[rotation] = rv;
+      if (group) {
+        mode.group = group;
+      }
+      modes.push(mode);
+    }
+
+    spins.forEach(function (spin) {
+      colours.forEach(function (item) {
+        add(item[0] + "_" + spin[0], item[1] + " " + spin[1], item[2], item[3], 0, spin[2]);
       });
-    }
-    if (!option.slider && option.value === undefined) {
-      option.value = min;
-    }
-    return option;
+    });
+    spins.forEach(function (spin) {
+      colours.forEach(function (item) {
+        add(
+          "strobe_" + item[0] + "_" + spin[0],
+          item[1] + " " + spin[1],
+          item[2],
+          item[3],
+          250,
+          spin[2],
+          "Strobe"
+        );
+      });
+    });
+    return modes;
   }
 
-  var parDimmer = [
-    opt(0, 127, "RGB level", { slider: true }),
-    opt(128, 239, "Strobe speed", { slider: true }),
-    opt(240, 249, "Strobe to sound", { value: 244 }),
-    opt(250, 255, "RGB 100%", { value: 255 }),
-  ];
-
-  var derbyColour = [
-    opt(0, 24, "Blackout"),
-    opt(25, 49, "Red"),
-    opt(50, 74, "Green"),
-    opt(75, 99, "Blue"),
-    opt(100, 124, "Red + Green"),
-    opt(125, 149, "Red + Blue"),
-    opt(150, 174, "Green + Blue"),
-    opt(175, 199, "Red + Green + Blue"),
-    opt(200, 224, "Automatic, single colours"),
-    opt(225, 255, "Automatic, two colours"),
-  ];
-
-  var derbyStrobe = [
-    opt(0, 9, "No function"),
-    opt(10, 239, "Strobe 0–30 Hz", { slider: true }),
-    opt(240, 255, "Strobe to sound", { value: 247 }),
-  ];
-
-  var rotation = [
-    opt(0, 4, "Stop", { also: [[128, 133]] }),
-    opt(5, 127, "Clockwise (slow → fast)", { slider: true }),
-    opt(134, 255, "Counter-clockwise (slow → fast)", { slider: true }),
-  ];
-
-  var laserColour = [
-    opt(0, 39, "Blackout"),
-    opt(40, 79, "Red on"),
-    opt(80, 119, "Green on"),
-    opt(120, 159, "Red + Green on"),
-    opt(160, 199, "Red on, Green strobe"),
-    opt(200, 239, "Green on, Red strobe"),
-    opt(240, 255, "Red + Green, alternate strobe"),
-  ];
-
-  var laserStrobe = [
-    opt(0, 9, "No function"),
-    opt(10, 239, "Strobe speed", { slider: true }),
-    opt(240, 255, "Strobe to sound", { value: 247 }),
-  ];
-
-  var strobePatterns = [
-    opt(0, 9, "Blackout"),
-    opt(10, 19, "White auto 1"),
-    opt(20, 29, "White auto 2"),
-    opt(30, 39, "White auto 3"),
-    opt(40, 49, "White auto 4"),
-    opt(50, 59, "White auto 5"),
-    opt(60, 69, "White auto 6"),
-    opt(70, 79, "White auto 7"),
-    opt(80, 89, "White auto 8"),
-    opt(90, 99, "White auto 9"),
-    opt(100, 109, "White manual strobe"),
-    opt(110, 119, "UV auto 1"),
-    opt(120, 129, "UV auto 2"),
-    opt(130, 139, "UV auto 3"),
-    opt(140, 149, "UV auto 4"),
-    opt(150, 159, "UV auto 5"),
-    opt(160, 169, "UV auto 6"),
-    opt(170, 179, "UV auto 7"),
-    opt(180, 189, "UV auto 8"),
-    opt(190, 199, "UV auto 9"),
-    opt(200, 209, "UV manual strobe"),
-    opt(210, 229, "UV strobe to sound"),
-    opt(230, 255, "White strobe to sound"),
-  ];
-
-  function parSection(id, label, start) {
-    return {
-      id: id,
-      label: label,
-      toggleable: true,
-      channels: [start, start + 1, start + 2, start + 3, start + 4],
-      constraints: [
-        {
-          type: "max-nonzero",
-          channels: [start, start + 1, start + 2, start + 3],
-          max: 3,
-          message: label + ": at most 3 of 4 colours may be active.",
-        },
-      ],
-      controls: [
-        { kind: "slider", channel: start, label: "Red", accent: "red" },
-        { kind: "slider", channel: start + 1, label: "Green", accent: "green" },
-        { kind: "slider", channel: start + 2, label: "Blue", accent: "blue" },
-        { kind: "slider", channel: start + 3, label: "UV", accent: "uv" },
-        { kind: "range-select", channel: start + 4, label: "Dimmer / strobe", options: parDimmer },
-      ],
-    };
-  }
-
-  function derbySection(id, label, start) {
-    return {
-      id: id,
-      label: label,
-      toggleable: true,
-      channels: [start, start + 1, start + 2],
-      controls: [
-        { kind: "range-select", channel: start, label: "Colour", options: derbyColour },
-        { kind: "range-select", channel: start + 1, label: "Strobe rate", options: derbyStrobe },
-        { kind: "range-select", channel: start + 2, label: "Rotation", options: rotation },
-      ],
-    };
+  function ch(map) {
+    return map;
   }
 
   global.CHAUVET_GIGBAR_2 = {
@@ -131,43 +88,69 @@
     mode: "23CH",
     channelCount: 23,
     sections: [
-      parSection("par1", "Par 1", 0),
-      parSection("par2", "Par 2", 5),
-      derbySection("derby1", "Derby 1", 10),
-      derbySection("derby2", "Derby 2", 13),
+      {
+        id: "par_1",
+        label: "Par 1",
+        owned: [1, 2, 3, 4, 5],
+        modes: parModes(1, 2, 3, 4, 5),
+      },
+      {
+        id: "par_2",
+        label: "Par 2",
+        owned: [6, 7, 8, 9, 10],
+        modes: parModes(6, 7, 8, 9, 10),
+      },
+      {
+        id: "derby_1",
+        label: "Derby 1",
+        owned: [11, 12, 13],
+        modes: derbyModes(11, 12, 13),
+      },
+      {
+        id: "derby_2",
+        label: "Derby 2",
+        owned: [14, 15, 16],
+        modes: derbyModes(14, 15, 16),
+      },
       {
         id: "laser",
         label: "Laser",
-        toggleable: true,
-        channels: [16, 17, 18],
-        controls: [
-          { kind: "range-select", channel: 16, label: "Colour", options: laserColour },
-          { kind: "range-select", channel: 17, label: "Strobe", options: laserStrobe },
-          { kind: "range-select", channel: 18, label: "Pattern / rotation", options: rotation },
+        owned: [17, 18, 19],
+        modes: [
+          { id: "off", label: "Off", channels: ch({ 17: 0, 18: 0, 19: 0 }) },
+          { id: "red_cw", label: "R CW", accent: "red", channels: ch({ 17: 79, 18: 0, 19: 127 }) },
+          { id: "red_cc", label: "R CC", accent: "red", channels: ch({ 17: 79, 18: 0, 19: 255 }) },
+          { id: "green_cw", label: "G CW", accent: "green", channels: ch({ 17: 119, 18: 0, 19: 127 }) },
+          { id: "green_cc", label: "G CC", accent: "green", channels: ch({ 17: 119, 18: 0, 19: 255 }) },
+          { id: "rg_cw", label: "RG CW", accent: "mixed", channels: ch({ 17: 159, 18: 0, 19: 127 }) },
+          { id: "rg_cc", label: "RG CC", accent: "mixed", channels: ch({ 17: 159, 18: 0, 19: 255 }) },
+          { id: "r_gstrobe_cw", label: "R+Gs CW", accent: "mixed", channels: ch({ 17: 199, 18: 0, 19: 127 }) },
+          { id: "r_gstrobe_cc", label: "R+Gs CC", accent: "mixed", channels: ch({ 17: 199, 18: 0, 19: 255 }) },
+          { id: "rstrobe_g_cw", label: "Rs+G CW", accent: "mixed", channels: ch({ 17: 239, 18: 0, 19: 127 }) },
+          { id: "rstrobe_g_cc", label: "Rs+G CC", accent: "mixed", channels: ch({ 17: 239, 18: 0, 19: 255 }) },
+          { id: "auto_cw", label: "Auto CW", channels: ch({ 17: 255, 18: 0, 19: 127 }) },
+          { id: "auto_cc", label: "Auto CC", channels: ch({ 17: 255, 18: 0, 19: 255 }) },
         ],
       },
       {
         id: "strobe",
         label: "Strobe",
-        toggleable: true,
-        channels: [19, 20, 21, 22],
+        owned: [20, 21, 22, 23],
         constraints: [
           {
             type: "mutex",
-            channels: [20, 21],
+            channels: [21, 22],
             message: "White and UV strobe cannot be used together.",
           },
         ],
-        controls: [
-          { kind: "range-select", channel: 19, label: "Pattern", options: strobePatterns },
-          {
-            kind: "mutex-pair",
-            channels: [20, 21],
-            label: "White or UV dimmer",
-            labels: ["White", "UV"],
-            accents: ["white", "uv"],
-          },
-          { kind: "slider", channel: 22, label: "Speed" },
+        modes: [
+          { id: "off", label: "Off", channels: ch({ 20: 0, 21: 0, 22: 0, 23: 0 }) },
+          { id: "slowW", label: "Slow W", accent: "white", channels: ch({ 20: 190, 21: 75, 22: 0, 23: 0 }) },
+          { id: "slowUV", label: "Slow UV", accent: "uv", channels: ch({ 20: 190, 21: 0, 22: 100, 23: 0 }) },
+          { id: "fastW", label: "Fast W", accent: "white", channels: ch({ 20: 209, 21: 75, 22: 0, 23: 0 }) },
+          { id: "fastUV", label: "Fast UV", accent: "uv", channels: ch({ 20: 209, 21: 0, 22: 100, 23: 0 }) },
+          { id: "soundW", label: "Sound W", accent: "white", channels: ch({ 20: 255, 21: 75, 22: 0, 23: 0 }) },
+          { id: "soundUV", label: "Sound UV", accent: "uv", channels: ch({ 20: 255, 21: 0, 22: 100, 23: 0 }) },
         ],
       },
     ],

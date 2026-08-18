@@ -9,289 +9,249 @@
     return values;
   }
 
-  function optionMatches(option, value) {
-    if (value >= option.min && value <= option.max) {
-      return true;
+  function clone(obj) {
+    return JSON.parse(JSON.stringify(obj));
+  }
+
+  function defaultState(profile) {
+    var state = {};
+    profile.sections.forEach(function (section) {
+      if (section.exclusive === false) {
+        state[section.id] = [];
+      } else {
+        state[section.id] = section.defaultMode || "off";
+      }
+    });
+    return state;
+  }
+
+  function modeById(section, id) {
+    for (var i = 0; i < section.modes.length; i += 1) {
+      if (section.modes[i].id === id) {
+        return section.modes[i];
+      }
     }
-    return (option.also || []).some(function (range) {
-      return value >= range[0] && value <= range[1];
+    return null;
+  }
+
+  function writeMap(values, map, combineMax) {
+    Object.keys(map).forEach(function (key) {
+      var channel = Number(key) - 1;
+      var next = map[key] | 0;
+      if (channel < 0 || channel >= values.length) {
+        return;
+      }
+      values[channel] = combineMax ? Math.max(values[channel], next) : next;
     });
   }
 
-  function findOption(options, value) {
-    for (var i = 0; i < options.length; i += 1) {
-      if (optionMatches(options[i], value)) {
-        return options[i];
-      }
-    }
-    return options[0];
+  function ownedMap(section, values) {
+    var map = {};
+    (section.owned || []).forEach(function (ch) {
+      map[ch] = values[ch - 1] | 0;
+    });
+    return map;
   }
 
-  function nonzeroCount(values, channels) {
-    return channels.reduce(function (count, ch) {
-      return count + (values[ch] > 0 ? 1 : 0);
-    }, 0);
+  function encode(profile, state, snapshots) {
+    var values = zeros(profile.channelCount);
+    profile.sections.forEach(function (section) {
+      if (snapshots && snapshots[section.id]) {
+        writeMap(values, snapshots[section.id], false);
+        return;
+      }
+      if (section.exclusive === false) {
+        (state[section.id] || []).forEach(function (id) {
+          var mode = modeById(section, id);
+          if (mode) {
+            writeMap(values, mode.channels, true);
+          }
+        });
+        return;
+      }
+      var mode = modeById(section, state[section.id]);
+      if (mode) {
+        writeMap(values, mode.channels, false);
+      }
+    });
+    return values;
+  }
+
+  function ignored(section) {
+    return (section.matchIgnore || []).map(Number);
+  }
+
+  function modeMatches(mode, values, ignore) {
+    var keys = Object.keys(mode.channels);
+    var compared = 0;
+    for (var i = 0; i < keys.length; i += 1) {
+      var ch = Number(keys[i]);
+      if (ignore.indexOf(ch) !== -1) {
+        continue;
+      }
+      compared += 1;
+      if ((values[ch - 1] | 0) !== (mode.channels[keys[i]] | 0)) {
+        return 0;
+      }
+    }
+    return compared;
+  }
+
+  function ownedZero(section, values) {
+    return (section.owned || Object.keys((section.modes[0] || {}).channels || {})).every(function (ch) {
+      return (values[Number(ch) - 1] | 0) === 0;
+    });
+  }
+
+  function decode(profile, values) {
+    var state = defaultState(profile);
+    var snapshots = {};
+    profile.sections.forEach(function (section) {
+      var ignore = ignored(section);
+      if (section.exclusive === false) {
+        var selected = [];
+        section.modes.forEach(function (mode) {
+          if (modeMatches(mode, values, ignore) > 0) {
+            selected.push(mode.id);
+          }
+        });
+        state[section.id] = selected;
+        return;
+      }
+
+      var best = null;
+      var bestScore = 0;
+      section.modes.forEach(function (mode) {
+        if (mode.id === "off" || mode.id === section.defaultMode) {
+          return;
+        }
+        var score = modeMatches(mode, values, ignore);
+        if (score > bestScore) {
+          best = mode;
+          bestScore = score;
+        }
+      });
+      if (best) {
+        state[section.id] = best.id;
+        return;
+      }
+      var fallback = modeById(section, section.defaultMode || "off");
+      if (fallback && modeMatches(fallback, values, ignore) > 0) {
+        state[section.id] = fallback.id;
+        return;
+      }
+      if (ownedZero(section, values)) {
+        state[section.id] = section.defaultMode || "off";
+        return;
+      }
+      snapshots[section.id] = ownedMap(section, values);
+      state[section.id] = "custom";
+    });
+    return { state: state, snapshots: snapshots };
+  }
+
+  function mutexOk(values, channels) {
+    var live = channels.filter(function (ch) {
+      return values[ch - 1] > 0;
+    });
+    return live.length <= 1;
   }
 
   function mount(container, profile, initialValues) {
-    var values = zeros(profile.channelCount);
+    var state = defaultState(profile);
     var snapshots = {};
-    var sectionOn = {};
-    var syncers = [];
     var noteEl = document.createElement("p");
     noteEl.className = "help";
     noteEl.hidden = true;
+    var sectionsEl = document.createElement("div");
+    var previewEl = document.createElement("div");
 
     function setNote(text) {
       noteEl.hidden = !text;
       noteEl.textContent = text || "";
     }
 
-    function applyConstraint(constraint, channel, nextValue) {
-      if (constraint.type === "max-nonzero") {
-        var wouldBe = nextValue > 0;
-        var was = values[channel] > 0;
-        if (wouldBe && !was && nonzeroCount(values, constraint.channels) >= constraint.max) {
-          setNote(constraint.message);
-          return values[channel];
-        }
-      }
-      if (constraint.type === "mutex") {
-        if (nextValue > 0) {
-          constraint.channels.forEach(function (ch) {
-            if (ch !== channel) {
-              values[ch] = 0;
-            }
-          });
-        }
-      }
-      return nextValue;
+    function currentValues() {
+      return encode(profile, state, snapshots);
     }
 
-    function writeChannel(channel, nextValue, section) {
-      var constrained = nextValue;
-      (section.constraints || []).forEach(function (constraint) {
-        constrained = applyConstraint(constraint, channel, constrained);
-      });
-      values[channel] = Math.max(0, Math.min(255, constrained | 0));
-      return values[channel];
-    }
-
-    function renderControl(control, section, body) {
-      if (control.kind === "slider") {
-        var row = document.createElement("div");
-        row.className = "control-row";
-        var label = document.createElement("span");
-        label.textContent = control.label;
-        var input = document.createElement("input");
-        input.type = "range";
-        input.min = String(control.min || 0);
-        input.max = String(control.max || 255);
-        input.value = String(values[control.channel]);
-        if (control.accent) {
-          input.className = "ch-" + control.accent;
-        }
-        var readout = document.createElement("span");
-        readout.className = "value";
-        readout.textContent = input.value;
-        input.addEventListener("input", function () {
-          var written = writeChannel(control.channel, Number(input.value), section);
-          input.value = String(written);
-          readout.textContent = String(written);
+    function paintButtons() {
+      container.querySelectorAll(".mode-group").forEach(function (group) {
+        var sectionId = group.dataset.section;
+        var section = profile.sections.find(function (item) {
+          return item.id === sectionId;
         });
-        row.append(label, input, readout);
-        body.appendChild(row);
-        syncers.push(function () {
-          input.value = String(values[control.channel]);
-          readout.textContent = input.value;
-        });
-        return;
-      }
-
-      if (control.kind === "range-select") {
-        var stack = document.createElement("div");
-        stack.className = "control-stack";
-        var field = document.createElement("label");
-        field.className = "field";
-        field.textContent = control.label;
-        var select = document.createElement("select");
-        control.options.forEach(function (option, index) {
-          var opt = document.createElement("option");
-          opt.value = String(index);
-          opt.textContent = option.label;
-          select.appendChild(opt);
-        });
-        field.appendChild(select);
-        var sliderRow = document.createElement("div");
-        sliderRow.className = "control-row";
-        var sliderLabel = document.createElement("span");
-        sliderLabel.textContent = "Value";
-        var slider = document.createElement("input");
-        slider.type = "range";
-        var sliderReadout = document.createElement("span");
-        sliderReadout.className = "value";
-        sliderRow.append(sliderLabel, slider, sliderReadout);
-
-        function applyOption(option, keepValue) {
-          var current = values[control.channel];
-          var next;
-          if (option.slider) {
-            slider.min = String(option.min);
-            slider.max = String(option.max);
-            sliderRow.hidden = false;
-            if (keepValue && current >= option.min && current <= option.max) {
-              next = current;
-            } else {
-              next = option.min;
-            }
-            slider.value = String(next);
-            sliderReadout.textContent = String(next);
-          } else {
-            sliderRow.hidden = true;
-            if (keepValue && optionMatches(option, current)) {
-              next = current;
-            } else {
-              next = option.value !== undefined ? option.value : option.min;
-            }
-          }
-          writeChannel(control.channel, next, section);
-        }
-
-        select.addEventListener("change", function () {
-          applyOption(control.options[Number(select.value)], false);
-        });
-        slider.addEventListener("input", function () {
-          var written = writeChannel(control.channel, Number(slider.value), section);
-          slider.value = String(written);
-          sliderReadout.textContent = String(written);
-        });
-
-        stack.append(field, sliderRow);
-        body.appendChild(stack);
-
-        function syncSelect() {
-          var option = findOption(control.options, values[control.channel]);
-          select.value = String(control.options.indexOf(option));
-          applyOption(option, true);
-        }
-        syncers.push(syncSelect);
-        syncSelect();
-        return;
-      }
-
-      if (control.kind === "mutex-pair") {
-        var wrap = document.createElement("div");
-        wrap.className = "control-stack";
-        var title = document.createElement("span");
-        title.style.color = "var(--muted)";
-        title.style.fontSize = "13px";
-        title.textContent = control.label;
-        var radios = document.createElement("div");
-        radios.className = "mutex-row";
-        var name = section.id + "-" + control.channels.join("-");
-        var modes = [
-          { id: "off", label: "Off" },
-          { id: "a", label: control.labels[0] },
-          { id: "b", label: control.labels[1] },
-        ];
-        var inputs = {};
-        modes.forEach(function (mode) {
-          var lab = document.createElement("label");
-          var radio = document.createElement("input");
-          radio.type = "radio";
-          radio.name = name;
-          radio.value = mode.id;
-          inputs[mode.id] = radio;
-          lab.append(radio, document.createTextNode(mode.label));
-          radios.appendChild(lab);
-        });
-        var sliderRow = document.createElement("div");
-        sliderRow.className = "control-row";
-        var dimLabel = document.createElement("span");
-        dimLabel.textContent = "Dimmer";
-        var slider = document.createElement("input");
-        slider.type = "range";
-        slider.min = "0";
-        slider.max = "255";
-        var readout = document.createElement("span");
-        readout.className = "value";
-        sliderRow.append(dimLabel, slider, readout);
-
-        function currentMode() {
-          var a = values[control.channels[0]];
-          var b = values[control.channels[1]];
-          if (a > 0 && a >= b) {
-            return "a";
-          }
-          if (b > 0) {
-            return "b";
-          }
-          return "off";
-        }
-
-        function applyMode(mode, level) {
-          if (mode === "off") {
-            values[control.channels[0]] = 0;
-            values[control.channels[1]] = 0;
-            sliderRow.hidden = true;
-            return;
-          }
-          sliderRow.hidden = false;
-          var amount = level === undefined ? Number(slider.value) || 255 : level;
-          if (mode === "a") {
-            values[control.channels[0]] = amount;
-            values[control.channels[1]] = 0;
-            slider.className = control.accents ? "ch-" + control.accents[0] : "";
-          } else {
-            values[control.channels[0]] = 0;
-            values[control.channels[1]] = amount;
-            slider.className = control.accents ? "ch-" + control.accents[1] : "";
-          }
-          slider.value = String(amount);
-          readout.textContent = String(amount);
-        }
-
-        radios.addEventListener("change", function (event) {
-          applyMode(event.target.value, Number(slider.value) || 255);
-        });
-        slider.addEventListener("input", function () {
-          var mode = inputs.a.checked ? "a" : inputs.b.checked ? "b" : "off";
-          applyMode(mode, Number(slider.value));
-        });
-
-        wrap.append(title, radios, sliderRow);
-        body.appendChild(wrap);
-        function syncMutex() {
-          var mode = currentMode();
-          inputs[mode].checked = true;
-          applyMode(mode, values[control.channels[0]] || values[control.channels[1]] || 0);
-        }
-        syncers.push(syncMutex);
-        syncMutex();
-      }
-    }
-
-    function sectionActive(section, source) {
-      return section.channels.some(function (ch) {
-        return source[ch] > 0;
-      });
-    }
-
-    function setSectionEnabled(section, body, on) {
-      sectionOn[section.id] = on;
-      body.style.opacity = on || !section.toggleable ? "1" : "0.45";
-      body.querySelectorAll("input, select, button").forEach(function (el) {
-        if (el.dataset.toggle) {
+        if (!section) {
           return;
         }
-        el.disabled = section.toggleable && !on;
+        group.querySelectorAll(".mode-btn").forEach(function (btn) {
+          var id = btn.dataset.mode;
+          if (section.exclusive === false) {
+            btn.classList.toggle("selected-multi", (state[section.id] || []).indexOf(id) !== -1);
+            btn.classList.remove("selected");
+          } else {
+            btn.classList.toggle("selected", state[section.id] === id);
+            btn.classList.remove("selected-multi");
+          }
+        });
       });
+    }
+
+    function paintPreview() {
+      var values = currentValues();
+      previewEl.textContent = "";
+      var heading = document.createElement("h3");
+      heading.textContent = "DMX preview";
+      previewEl.appendChild(heading);
+      var grid = document.createElement("div");
+      grid.className = "dmx-preview";
+      values.forEach(function (value, index) {
+        var cell = document.createElement("div");
+        cell.className = "dmx-channel" + (value > 0 ? " active" : "");
+        cell.innerHTML =
+          '<span class="ch-num">' + (index + 1) + "</span>" +
+          '<span class="ch-val">' + value + "</span>";
+        grid.appendChild(cell);
+      });
+      previewEl.appendChild(grid);
+    }
+
+    function refresh() {
+      paintButtons();
+      paintPreview();
+      if (Object.keys(snapshots).length) {
+        setNote("Loaded channels don't match a named look. Pick a look to replace that section.");
+      } else {
+        setNote("");
+      }
+    }
+
+    function selectExclusive(section, modeId) {
+      if (modeId === "custom") {
+        return;
+      }
+      delete snapshots[section.id];
+      state[section.id] = modeId;
+      render();
+    }
+
+    function toggleMulti(section, modeId) {
+      delete snapshots[section.id];
+      var selected = (state[section.id] || []).slice();
+      var index = selected.indexOf(modeId);
+      if (index === -1) {
+        selected.push(modeId);
+      } else {
+        selected.splice(index, 1);
+      }
+      state[section.id] = selected;
+      render();
     }
 
     function render() {
-      syncers = [];
       container.textContent = "";
       container.appendChild(noteEl);
+      sectionsEl.textContent = "";
       profile.sections.forEach(function (section) {
         var card = document.createElement("section");
         card.className = "section-card";
@@ -300,108 +260,101 @@
         var title = document.createElement("h3");
         title.textContent = section.label;
         head.appendChild(title);
-        var body = document.createElement("div");
         if (section.help) {
           var help = document.createElement("p");
           help.className = "help";
+          help.style.margin = "0";
           help.textContent = section.help;
-          body.appendChild(help);
+          head.appendChild(help);
         }
-        if (section.toggleable) {
-          var toggleLab = document.createElement("label");
-          var toggle = document.createElement("input");
-          toggle.type = "checkbox";
-          toggle.dataset.toggle = "1";
-          toggle.checked = sectionOn[section.id] !== false;
-          toggleLab.append(toggle, document.createTextNode(" On"));
-          head.appendChild(toggleLab);
-          toggle.addEventListener("change", function () {
-            if (toggle.checked) {
-              var snap = snapshots[section.id];
-              if (snap) {
-                section.channels.forEach(function (ch, i) {
-                  values[ch] = snap[i];
-                });
-              }
-              setSectionEnabled(section, body, true);
-              syncControls();
+        var group = document.createElement("div");
+        group.className = "mode-group";
+        group.dataset.section = section.id;
+        var lastGroup = "";
+        var modes = section.modes.slice();
+        if (state[section.id] === "custom") {
+          modes = [{ id: "custom", label: "Custom" }].concat(modes);
+        }
+        modes.forEach(function (mode) {
+          if (mode.group && mode.group !== lastGroup) {
+            var header = document.createElement("div");
+            header.className = "strobe-header";
+            header.textContent = mode.group;
+            group.appendChild(header);
+            lastGroup = mode.group;
+          }
+          var btn = document.createElement("button");
+          btn.type = "button";
+          btn.className = "mode-btn" + (mode.accent ? " accent-" + mode.accent : "");
+          btn.dataset.mode = mode.id;
+          btn.textContent = mode.label;
+          btn.title = mode.id;
+          if (mode.id === "custom") {
+            btn.disabled = true;
+          }
+          btn.addEventListener("click", function () {
+            if (section.exclusive === false) {
+              toggleMulti(section, mode.id);
             } else {
-              snapshots[section.id] = section.channels.map(function (ch) {
-                return values[ch];
-              });
-              section.channels.forEach(function (ch) {
-                values[ch] = 0;
-              });
-              setSectionEnabled(section, body, false);
+              selectExclusive(section, mode.id);
             }
           });
-        }
-        section.controls.forEach(function (control) {
-          renderControl(control, section, body);
+          group.appendChild(btn);
         });
-        card.append(head, body);
-        container.appendChild(card);
-        setSectionEnabled(section, body, !section.toggleable || sectionOn[section.id] !== false);
+        card.append(head, group);
+        sectionsEl.appendChild(card);
       });
-    }
-
-    function syncControls() {
-      syncers.forEach(function (sync) {
-        sync();
-      });
+      previewEl.className = "section-card";
+      container.append(sectionsEl, previewEl);
+      refresh();
     }
 
     function setValues(next) {
-      values = zeros(profile.channelCount);
+      var loaded = zeros(profile.channelCount);
       (next || []).forEach(function (value, index) {
-        if (index < values.length) {
-          values[index] = Math.max(0, Math.min(255, value | 0));
+        if (index < loaded.length) {
+          loaded[index] = Math.max(0, Math.min(255, value | 0));
         }
       });
-      snapshots = {};
-      profile.sections.forEach(function (section) {
-        sectionOn[section.id] = !section.toggleable || sectionActive(section, values);
-      });
+      var decoded = decode(profile, loaded);
+      state = decoded.state;
+      snapshots = decoded.snapshots || {};
       render();
-      setNote("");
     }
 
     function validate() {
+      var values = currentValues();
       var errors = [];
       profile.sections.forEach(function (section) {
         (section.constraints || []).forEach(function (constraint) {
-          if (constraint.type === "max-nonzero" && nonzeroCount(values, constraint.channels) > constraint.max) {
+          if (constraint.type === "mutex" && !mutexOk(values, constraint.channels)) {
             errors.push(constraint.message);
-          }
-          if (constraint.type === "mutex") {
-            var live = constraint.channels.filter(function (ch) {
-              return values[ch] > 0;
-            });
-            if (live.length > 1) {
-              errors.push(constraint.message);
-            }
           }
         });
       });
       return { ok: errors.length === 0, errors: errors };
     }
 
-    profile.sections.forEach(function (section) {
-      sectionOn[section.id] = !section.toggleable;
-    });
     setValues(initialValues || zeros(profile.channelCount));
 
     return {
-      getValues: function () {
-        return values.slice();
-      },
+      getValues: currentValues,
       setValues: setValues,
       validate: validate,
       reset: function () {
-        setValues(zeros(profile.channelCount));
+        state = defaultState(profile);
+        snapshots = {};
+        render();
       },
     };
   }
 
-  global.LightsFixtureEditor = { mount: mount, zeros: zeros };
+  global.LightsFixtureEditor = {
+    mount: mount,
+    zeros: zeros,
+    encode: encode,
+    decode: decode,
+    defaultState: defaultState,
+    clone: clone,
+  };
 })(window);

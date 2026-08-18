@@ -274,6 +274,7 @@ def test_operator_page_is_served_at_the_root(client: TestClient) -> None:
         "/builder/wled-preset-lists/",
         "/builder/scenes/",
         "/diag/",
+        "/about/",
         "/css/app.css",
         "/js/api.js",
         "/js/show.js",
