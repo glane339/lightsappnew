@@ -76,6 +76,7 @@ def create_app(
     app.state.authoring = authoring
     app.state.engine = engine
     app.state.show_events = events
+    app.state.request_shutdown = None
 
     register_exception_handlers(app)
     app.include_router(show_router)

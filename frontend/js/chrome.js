@@ -24,6 +24,28 @@
       .join("");
   }
 
+  function showStopped() {
+    document.body.innerHTML =
+      '<main class="stopped">' +
+      "<h1>Lights</h1>" +
+      "<p>Server stopped. The rig is dark.</p>" +
+      "</main>";
+  }
+
+  function bindStop(bar) {
+    var btn = bar.querySelector("#stop-server");
+    if (!btn) {
+      return;
+    }
+    btn.onclick = function () {
+      if (!window.confirm("Stop the Lights server? The rig will black out.")) {
+        return;
+      }
+      btn.disabled = true;
+      fetch("/api/shutdown", { method: "POST" }).finally(showStopped);
+    };
+  }
+
   function mountTopbar(mode, extra) {
     var bar = document.createElement("header");
     bar.className = "topbar";
@@ -32,8 +54,10 @@
       (extra || "") +
       "<nav>" +
       topLinks(mode) +
-      "</nav>";
+      "</nav>" +
+      '<button type="button" id="stop-server" class="ghost">Stop server</button>';
     document.body.prepend(bar);
+    bindStop(bar);
     return bar;
   }
 

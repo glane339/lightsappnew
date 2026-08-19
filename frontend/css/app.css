@@ -123,6 +123,17 @@ label.field {
 .conn { font-size: 13px; color: var(--muted); }
 .conn.live { color: var(--good); }
 .conn.dead { color: var(--bad); }
+.topbar #stop-server {
+  padding: 6px 10px;
+  font-size: 13px;
+}
+.stopped {
+  max-width: 520px;
+  margin: 20vh auto 0;
+  padding: 0 24px;
+  color: var(--muted);
+}
+.stopped h1 { margin-bottom: 8px; color: var(--text); }
 
 .builder-shell {
   display: grid;

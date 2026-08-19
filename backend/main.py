@@ -38,14 +38,16 @@ def main() -> int:
         # transports itself (see asyncio.base_events._set_nodelay), on both the selector
         # and proactor loops. Nagle would otherwise batch control frames and cost more
         # than the entire budget.
-        uvicorn.run(
+        uv_config = uvicorn.Config(
             app,
             host=config.server.host,
             port=config.server.port,
-            workers=1,
             log_level="info",
             timeout_graceful_shutdown=5,
         )
+        server = uvicorn.Server(uv_config)
+        app.state.request_shutdown = lambda: setattr(server, "should_exit", True)
+        server.run()
     finally:
         tuning.release()
         shutdown_logging()

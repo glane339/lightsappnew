@@ -1,10 +1,10 @@
-"""Liveness and the one aggregate view the operator page polls."""
+"""Liveness, operator status, and process shutdown."""
 
 from __future__ import annotations
 
 from typing import Dict, Optional
 
-from fastapi import APIRouter
+from fastapi import APIRouter, BackgroundTasks, Request
 from pydantic import BaseModel
 
 from server.deps import EngineDep
@@ -41,6 +41,28 @@ class StatusResponse(BaseModel):
 @router.get("/health")
 def health() -> HealthResponse:
     return HealthResponse(status="ok")
+
+
+class ShutdownResponse(BaseModel):
+    status: str
+
+
+@router.post("/shutdown")
+def shutdown(request: Request, background: BackgroundTasks) -> ShutdownResponse:
+    """
+    Stop the operator process after the response is sent.
+
+    Uvicorn's lifespan then runs ``engine.stop()``, which blacks out and closes the
+    transport. Tests leave ``app.state.request_shutdown`` unset so this is a no-op.
+    """
+    callback = getattr(request.app.state, "request_shutdown", None)
+
+    def _stop() -> None:
+        if callback is not None:
+            callback()
+
+    background.add_task(_stop)
+    return ShutdownResponse(status="stopping")
 
 
 @router.get("/status")

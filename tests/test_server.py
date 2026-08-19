@@ -80,6 +80,27 @@ def test_health_is_ok(client: TestClient) -> None:
     assert response.json() == {"status": "ok"}
 
 
+def test_shutdown_is_a_noop_without_a_callback(client: TestClient) -> None:
+    response = client.post("/api/shutdown")
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "stopping"}
+    assert client.get("/api/health").json() == {"status": "ok"}
+
+
+def test_shutdown_invokes_the_server_callback(data_root: Path) -> None:
+    app = create_app(AppConfig(), data_root=data_root)
+    called: List[bool] = []
+    app.state.request_shutdown = lambda: called.append(True)
+
+    with TestClient(app) as client:
+        response = client.post("/api/shutdown")
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "stopping"}
+    assert called == [True]
+
+
 def test_scene_list_is_empty_without_a_library(client: TestClient) -> None:
     assert client.get("/api/scenes").json() == {"scenes": []}
 
