@@ -28,10 +28,7 @@
     var bar = document.createElement("header");
     bar.className = "topbar";
     bar.innerHTML =
-      '<a class="brand" href="/">' +
-      '<span class="brand-mark">Lights</span>' +
-      '<span class="brand-sub">bsmt-01</span>' +
-      "</a>" +
+      '<a class="brand" href="/"><h1>Lights</h1></a>' +
       (extra || "") +
       "<nav>" +
       topLinks(mode) +

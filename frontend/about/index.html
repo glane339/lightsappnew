@@ -8,66 +8,52 @@
 </head>
 <body>
 <main class="about">
-  <div class="about-hero">
-    <h1>Lights</h1>
-    <span class="about-kicker">basement show control</span>
-    <p class="about-lead">
-      One room. One operator. One LAN. Select a scene; this station drives the
-      fixtures. Built for a basement rig, not a touring console.
-    </p>
-  </div>
+  <h1>About</h1>
+  <p class="about-lead">
+    Lights is the show-control app for this basement rig. Pick a scene and it
+    drives the DMX fixtures and WLED strips. One operator, one machine, one LAN.
+  </p>
 
   <div class="about-grid">
     <section class="about-card">
-      <h2>What this is</h2>
-      <p>
-        Lights is the house show-control computer. An operator selects a
-        <strong>scene</strong>. The scene sequences DMX looks and WLED strips
-        on the beat. There is no cloud, no login, and no spare console —
-        if this machine is off, the room is dark.
-      </p>
-    </section>
-
-    <section class="about-card">
-      <h2>Stations</h2>
+      <h2>Modes</h2>
       <p>
         <strong>Performance</strong> is live control: scene tiles, spacebar
-        beats, deactivate, and <strong>Blackout</strong>.
+        beats, deactivate, and blackout.
       </p>
       <p>
-        <strong>Builder</strong> authors fixture looks, pairs them into a
-        dmx_preset, stacks cue lists, then saves scenes.
+        <strong>Builder</strong> is where you author fixture looks, pair them
+        into a dmx_preset, build cue lists, and save scenes.
       </p>
     </section>
 
     <section class="about-card">
       <h2>The rig</h2>
-      <div class="rig-row">Chauvet GigBAR 2 <span>23CH · u1 ch 1–23</span></div>
-      <div class="rig-row">Keobin light bar <span>18CH · ch 24–41</span></div>
+      <div class="rig-row">Chauvet GigBAR 2 <span>23CH, universe 1 ch 1–23</span></div>
+      <div class="rig-row">Keobin light bar <span>18CH, ch 24–41</span></div>
       <div class="rig-row">WLED / LEDfx strips <span>scene names</span></div>
-      <div class="rig-row">ILDA laser <span>storage only · not live</span></div>
+      <div class="rig-row">ILDA laser <span>storage only, not live</span></div>
     </section>
 
     <section class="about-card">
-      <h2>How to run</h2>
+      <h2>How to run a show</h2>
       <ol>
-        <li>Build device presets per fixture.</li>
+        <li>Build device presets for each fixture.</li>
         <li>Pair GigBAR + Keobin into a look (dmx_preset).</li>
         <li>Order looks into cue lists. Same for WLED.</li>
-        <li>Pair a DMX list with a WLED list → scene.</li>
-        <li>Open Performance. Activate a scene. Spacebar is the beat until audio lands.</li>
+        <li>Pair a DMX list with a WLED list to make a scene.</li>
+        <li>Open Performance, activate a scene. Spacebar taps a beat until audio lands.</li>
       </ol>
     </section>
 
-    <section class="about-card wide">
-      <h2>Standing orders</h2>
-      <ol class="rules">
-        <li>One operator. This station is not a drink coaster.</li>
-        <li>Blackout is the panic control. Use it when the room needs to go dark.</li>
-        <li>The GigBAR has a laser. Do not stare into it. Do not point it at faces.</li>
-        <li>This box talks unicast on universe 1. If the LAN dies, the looks die with it.</li>
-        <li>Beats are still a tap. Until live audio is wired, the operator is the metronome.</li>
-      </ol>
+    <section class="about-card">
+      <h2>Notes</h2>
+      <ul>
+        <li>Blackout is the panic button when the room needs to go dark.</li>
+        <li>The GigBAR has a laser — don’t stare into it or point it at faces.</li>
+        <li>Output is unicast on universe 1. If the LAN dies, the looks stop.</li>
+        <li>Beats are still a tap until live audio is wired.</li>
+      </ul>
     </section>
   </div>
 </main>
