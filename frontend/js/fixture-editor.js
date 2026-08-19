@@ -201,7 +201,7 @@
       var values = currentValues();
       previewEl.textContent = "";
       var heading = document.createElement("h3");
-      heading.textContent = "DMX preview";
+      heading.textContent = "DMX";
       previewEl.appendChild(heading);
       var grid = document.createElement("div");
       grid.className = "dmx-preview";
@@ -219,11 +219,7 @@
     function refresh() {
       paintButtons();
       paintPreview();
-      if (Object.keys(snapshots).length) {
-        setNote("Loaded channels don't match a named look. Pick a look to replace that section.");
-      } else {
-        setNote("");
-      }
+      setNote("");
     }
 
     function selectExclusive(section, modeId) {
@@ -260,13 +256,6 @@
         var title = document.createElement("h3");
         title.textContent = section.label;
         head.appendChild(title);
-        if (section.help) {
-          var help = document.createElement("p");
-          help.className = "help";
-          help.style.margin = "0";
-          help.textContent = section.help;
-          head.appendChild(help);
-        }
         var group = document.createElement("div");
         group.className = "mode-group";
         group.dataset.section = section.id;

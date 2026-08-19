@@ -8,53 +8,11 @@
 </head>
 <body>
 <main class="about">
-  <h1>About</h1>
-  <p class="about-lead">
-    Lights is the show-control app for this basement rig. Pick a scene and it
-    drives the DMX fixtures and WLED strips. One operator, one machine, one LAN.
-  </p>
-
-  <div class="about-grid">
-    <section class="about-card">
-      <h2>Modes</h2>
-      <p>
-        <strong>Performance</strong> is live control: scene tiles, spacebar
-        beats, deactivate, and blackout.
-      </p>
-      <p>
-        <strong>Builder</strong> is where you author fixture looks, pair them
-        into a dmx_preset, build cue lists, and save scenes.
-      </p>
-    </section>
-
-    <section class="about-card">
-      <h2>The rig</h2>
-      <div class="rig-row">Chauvet GigBAR 2 <span>23CH, universe 1 ch 1–23</span></div>
-      <div class="rig-row">Keobin light bar <span>18CH, ch 24–41</span></div>
-      <div class="rig-row">WLED / LEDfx strips <span>scene names</span></div>
-      <div class="rig-row">ILDA laser <span>storage only, not live</span></div>
-    </section>
-
-    <section class="about-card">
-      <h2>How to run a show</h2>
-      <ol>
-        <li>Build device presets for each fixture.</li>
-        <li>Pair GigBAR + Keobin into a look (dmx_preset).</li>
-        <li>Order looks into cue lists. Same for WLED.</li>
-        <li>Pair a DMX list with a WLED list to make a scene.</li>
-        <li>Open Performance, activate a scene. Spacebar taps a beat until audio lands.</li>
-      </ol>
-    </section>
-
-    <section class="about-card">
-      <h2>Notes</h2>
-      <ul>
-        <li>Blackout is the panic button when the room needs to go dark.</li>
-        <li>The GigBAR has a laser — don’t stare into it or point it at faces.</li>
-        <li>Output is unicast on universe 1. If the LAN dies, the looks stop.</li>
-        <li>Beats are still a tap until live audio is wired.</li>
-      </ul>
-    </section>
+  <div class="about-card wide">
+    <div class="rig-row">GigBAR 2 <span>23CH · 1–23</span></div>
+    <div class="rig-row">Keobin <span>18CH · 24–41</span></div>
+    <div class="rig-row">WLED <span>LEDfx</span></div>
+    <div class="rig-row">ILDA <span>off</span></div>
   </div>
 </main>
 <script src="/js/chrome.js"></script>

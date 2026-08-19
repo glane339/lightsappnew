@@ -28,7 +28,6 @@
       {
         id: "special",
         label: "Special access",
-        help: "Keep Not used so the bar follows app beats, not its own auto/sound programs.",
         owned: [1],
         defaultMode: "unused",
         modes: [
@@ -51,7 +50,6 @@
         label: "Magic ball",
         exclusive: false,
         owned: [7, 8, 9, 10, 11, 12, 13],
-        help: "Multi-select. Each colour is independent.",
         modes: [
           { id: "red_1", label: "Red 1", accent: "red", channels: ch({ 7: 255 }) },
           { id: "green_1", label: "Green 1", accent: "green", channels: ch({ 8: 255 }) },
@@ -66,7 +64,6 @@
         id: "strobe",
         label: "Strobe",
         owned: [14, 15, 16, 17, 18],
-        help: "Channels 15/16 follow the fixture doc default (15 red, 16 green).",
         modes: [
           { id: "off", label: "Off", channels: ch({ 14: 0, 15: 0, 16: 0, 17: 0, 18: 0 }) },
           { id: "red_strobe_slow", label: "R Slow", accent: "red", group: "Slow", channels: ch({ 14: 30, 15: 255, 16: 0, 17: 0, 18: 0 }) },

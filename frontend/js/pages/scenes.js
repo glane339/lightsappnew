@@ -29,7 +29,7 @@
     select.textContent = "";
     var blank = document.createElement("option");
     blank.value = "";
-    blank.textContent = items.length ? "Select…" : "None available";
+    blank.textContent = items.length ? "Select…" : "—";
     select.appendChild(blank);
     items.forEach(function (item) {
       var opt = document.createElement("option");
@@ -127,7 +127,7 @@
     var dmxListId = dmxSelect.value;
     var wledListId = wledSelect.value;
     if (!dmxListId || !wledListId) {
-      banner("error", "Both a DMX list and a WLED list are required.");
+      banner("error", "Need DMX and WLED.");
       return;
     }
     var sensitivityRaw = sensitivityInput.value.trim();
@@ -135,7 +135,7 @@
     if (sensitivityRaw !== "") {
       sensitivity = Number(sensitivityRaw);
       if (!(sensitivity >= 0 && sensitivity <= 1)) {
-        banner("error", "Sensitivity must be between 0.0 and 1.0.");
+        banner("error", "Sensitivity 0–1.");
         return;
       }
     }
@@ -166,7 +166,7 @@
       sensitivityInput.value = String(saved.sensitivity);
       await refresh();
       renderLibrary();
-      banner("ok", "Saved " + saved.id + ". Test it in Performance.");
+      banner("ok", "Saved");
     } catch (err) {
       banner("error", err.message);
     }
@@ -183,7 +183,7 @@
       }
       await refresh();
       newScene();
-      banner("ok", "Deleted.");
+      banner("ok", "Deleted");
     } catch (err) {
       banner("error", err.message);
     }

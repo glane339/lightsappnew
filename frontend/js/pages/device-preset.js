@@ -100,7 +100,7 @@
       idInput.disabled = true;
       deleteBtn.hidden = false;
       await refresh();
-      banner("ok", "Saved " + saved.id);
+      banner("ok", "Saved");
     } catch (err) {
       banner("error", err.message);
     }
@@ -117,7 +117,7 @@
       }
       await refresh();
       newPreset();
-      banner("ok", "Deleted.");
+      banner("ok", "Deleted");
     } catch (err) {
       banner("error", err.message);
     }
@@ -127,7 +127,7 @@
     if (!profile) {
       missingEl.className = "banner error show";
       missingEl.hidden = false;
-      missingEl.textContent = "Missing fixture profile " + cfg.profileGlobal + ".";
+      missingEl.textContent = "Missing profile.";
       form.hidden = true;
       return;
     }

@@ -53,7 +53,7 @@
       if (!ids.length) {
         var empty = document.createElement("span");
         empty.className = "empty";
-        empty.textContent = "Empty — add from the palette. Empty lists cannot be saved.";
+        empty.textContent = "—";
         listEl.appendChild(empty);
         return;
       }
@@ -116,7 +116,7 @@
       if (!items.length) {
         var empty = document.createElement("span");
         empty.className = "empty";
-        empty.textContent = "Nothing in the palette yet.";
+        empty.textContent = "—";
         paletteEl.appendChild(empty);
         return;
       }

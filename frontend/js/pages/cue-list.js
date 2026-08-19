@@ -24,12 +24,8 @@
     document.getElementById("cue-list"),
     document.getElementById("palette"),
     {
-      onChange: function (ids) {
-        if (!ids.length) {
-          banner("warn", "Empty list cannot be saved.");
-        } else {
-          banner("", "");
-        }
+      onChange: function () {
+        banner("", "");
       },
     }
   );
@@ -104,14 +100,14 @@
   async function register() {
     var name = registerName.value.trim();
     if (!name) {
-      banner("error", "Enter an LEDfx scene name to register.");
+      banner("error", "Need a name.");
       return;
     }
     try {
       await api.wledPresets.register(name);
       registerName.value = "";
       await loadPalette();
-      banner("ok", "Registered " + name);
+      banner("ok", "Saved");
     } catch (err) {
       banner("error", err.message);
     }
@@ -121,11 +117,11 @@
     var ids = drag.getIds();
     var beats = Number(beatsInput.value);
     if (!ids.length) {
-      banner("error", "Empty list cannot be saved.");
+      banner("error", "Empty.");
       return;
     }
     if (!Number.isInteger(beats) || beats < 1) {
-      banner("error", "Beats per iteration must be an integer ≥ 1.");
+      banner("error", "Beats ≥ 1.");
       return;
     }
     var body = { beats: beats };
@@ -147,7 +143,7 @@
       deleteBtn.hidden = false;
       await refresh();
       loadList(saved);
-      banner("ok", "Saved " + saved.id);
+      banner("ok", "Saved");
     } catch (err) {
       banner("error", err.message);
     }
@@ -164,7 +160,7 @@
       }
       await refresh();
       newList();
-      banner("ok", "Deleted.");
+      banner("ok", "Deleted");
     } catch (err) {
       banner("error", err.message);
     }

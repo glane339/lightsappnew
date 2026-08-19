@@ -25,7 +25,7 @@
 
   function applyState(state) {
     activeSceneId = state.active_scene_id;
-    els("state").textContent = state.is_active ? "active: " + chrome.shortId(activeSceneId) : "idle";
+    els("state").textContent = state.is_active ? chrome.shortId(activeSceneId) : "—";
     document.querySelectorAll("[data-scene]").forEach(function (button) {
       button.classList.toggle("on", button.dataset.scene === activeSceneId);
     });
@@ -51,15 +51,15 @@
       els("p50").textContent = status.latency.count ? status.latency.p50_us + " µs" : "—";
       els("p99").textContent = status.latency.count ? status.latency.p99_us + " µs" : "—";
       els("sender").textContent =
-        status.sender.transport + (status.sender.running ? "" : " (stopped)");
+        status.sender.transport + (status.sender.running ? "" : " off");
       els("frames").textContent = status.sender.frames_sent ?? "—";
       els("ledfx").textContent = status.ledfx.enabled
         ? status.ledfx.reachable
-          ? "reachable"
-          : "unreachable"
-        : "disabled";
+          ? "ok"
+          : "down"
+        : "off";
     } catch (err) {
-      chrome.setConnection("status fetch failed", "dead");
+      chrome.setConnection("error", "dead");
     }
   }
 
@@ -69,13 +69,12 @@
       var scenes = await api.scenes.list();
       box.textContent = "";
       if (!scenes.length) {
-        box.innerHTML = '<span class="empty">No scenes in the library yet.</span>';
+        box.innerHTML = '<span class="empty">—</span>';
         return;
       }
       scenes.forEach(function (scene) {
         var button = document.createElement("button");
         button.textContent = chrome.shortId(scene.id);
-        button.title = scene.id + " — sensitivity " + scene.sensitivity;
         button.dataset.scene = scene.id;
         button.classList.toggle("on", scene.id === activeSceneId);
         button.onclick = function () {
@@ -84,7 +83,7 @@
         box.appendChild(button);
       });
     } catch (err) {
-      box.innerHTML = '<span class="empty">Could not load scenes.</span>';
+      box.innerHTML = '<span class="empty">—</span>';
     }
   }
 

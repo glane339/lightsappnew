@@ -35,7 +35,7 @@
       if (!scenes.length) {
         var empty = document.createElement("span");
         empty.className = "empty";
-        empty.textContent = "No scenes yet. Author them in Builder.";
+        empty.textContent = "—";
         grid.appendChild(empty);
         return;
       }
@@ -45,7 +45,6 @@
         tile.className = "scene-tile";
         tile.textContent = scene.id;
         tile.dataset.scene = scene.id;
-        tile.title = scene.id + " — sensitivity " + scene.sensitivity;
         tile.classList.toggle("on", scene.id === activeSceneId);
         tile.onclick = function () {
           show.activate(scene.id);
@@ -56,7 +55,7 @@
       grid.innerHTML = "";
       var empty = document.createElement("span");
       empty.className = "empty";
-      empty.textContent = "Could not load scenes: " + err.message;
+      empty.textContent = err.message;
       grid.appendChild(empty);
     }
   }

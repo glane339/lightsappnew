@@ -11,17 +11,16 @@
   <p id="missing" class="banner error" hidden></p>
   <div class="split">
     <section class="panel">
-      <h2>Device presets</h2>
+      <h2>Presets</h2>
       <div id="library" class="item-list"></div>
       <div class="actions"><button type="button" id="new-btn">New</button></div>
     </section>
     <section class="panel">
       <div id="banner" class="banner"></div>
       <form id="form">
-        <label class="field">Id slug
+        <label class="field">Id
           <input id="preset-id" name="id" placeholder="gigbar-red-wash" autocomplete="off">
         </label>
-        <p class="help">Named looks, not raw sliders. Off zeros that section. White and UV strobe stay exclusive.</p>
         <div id="fixture"></div>
         <div class="actions">
           <button type="submit" class="primary">Save</button>
@@ -37,7 +36,7 @@ window.DEVICE_PAGE = {
   mode: "23CH",
   profileGlobal: "CHAUVET_GIGBAR_2",
   nav: "gigbar2",
-  missingHint: "No GigBAR 2 is in the patch. Run backend/seed_devices.py."
+  missingHint: "GigBAR 2 not in patch."
 };
 </script>
 <script src="/js/api.js"></script>

@@ -9,14 +9,13 @@
 <body>
 <div id="beat-bar" class="beat-bar" aria-hidden="true"></div>
 <main id="page">
-  <div id="scenes" class="scene-grid"><span class="empty">loading…</span></div>
+  <div id="scenes" class="scene-grid"><span class="empty">…</span></div>
   <div class="transport">
     <button type="button" id="deactivate">Deactivate</button>
     <button type="button" id="blackout" class="danger">Blackout</button>
-    <button type="button" id="reload">Reload scenes</button>
-    <button type="button" id="beat" class="ghost" title="Manual beat until audio detection lands">Tap beat (space)</button>
+    <button type="button" id="reload">Reload</button>
+    <button type="button" id="beat" class="ghost">Beat</button>
   </div>
-  <p class="help">Spacebar taps a beat. The bar flashes when the server reports a beat.</p>
 </main>
 <script src="/js/api.js"></script>
 <script src="/js/show.js"></script>

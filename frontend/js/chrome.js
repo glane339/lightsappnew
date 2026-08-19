@@ -4,7 +4,7 @@
   var BUILDER_NAV = [
     { href: "/builder/gigbar2/", id: "gigbar2", group: "Device presets", label: "GigBAR 2" },
     { href: "/builder/keobin/", id: "keobin", group: "Device presets", label: "Keobin" },
-    { href: "/builder/dmx-presets/", id: "dmx-presets", group: "dmx_presets", label: "Pair fixtures" },
+    { href: "/builder/dmx-presets/", id: "dmx-presets", group: "dmx_presets", label: "Pair" },
     { href: "/builder/dmx-preset-lists/", id: "dmx-preset-lists", group: "Cue lists", label: "DMX lists" },
     { href: "/builder/wled-preset-lists/", id: "wled-preset-lists", group: "Cue lists", label: "WLED lists" },
     { href: "/builder/scenes/", id: "scenes", group: "Show", label: "Scenes" },
@@ -25,11 +25,7 @@
   }
 
   function showStopped() {
-    document.body.innerHTML =
-      '<main class="stopped">' +
-      "<h1>Lights</h1>" +
-      "<p>Server stopped. The rig is dark.</p>" +
-      "</main>";
+    document.body.innerHTML = '<main class="stopped"><p>Stopped</p></main>';
   }
 
   function bindStop(bar) {
@@ -38,7 +34,7 @@
       return;
     }
     btn.onclick = function () {
-      if (!window.confirm("Stop the Lights server? The rig will black out.")) {
+      if (!window.confirm("Stop?")) {
         return;
       }
       btn.disabled = true;
@@ -55,7 +51,7 @@
       "<nav>" +
       topLinks(mode) +
       "</nav>" +
-      '<button type="button" id="stop-server" class="ghost">Stop server</button>';
+      '<button type="button" id="stop-server" class="ghost">Stop</button>';
     document.body.prepend(bar);
     bindStop(bar);
     return bar;
@@ -70,12 +66,7 @@
     var nav = document.createElement("nav");
     nav.className = "builder-nav";
     var html = "";
-    var lastGroup = "";
     BUILDER_NAV.forEach(function (item) {
-      if (item.group !== lastGroup) {
-        html += '<div class="nav-hint">' + item.group + "</div>";
-        lastGroup = item.group;
-      }
       html +=
         '<a href="' +
         item.href +
@@ -151,7 +142,7 @@
     if (!items.length) {
       var empty = document.createElement("span");
       empty.className = "empty";
-      empty.textContent = "None yet.";
+      empty.textContent = "—";
       container.appendChild(empty);
       return;
     }
@@ -181,7 +172,7 @@
       var conn = document.createElement("span");
       conn.id = "conn";
       conn.className = "conn";
-      conn.textContent = "connecting…";
+      conn.textContent = "…";
       var bar = mountTopbar("performance", conn.outerHTML);
       var beat = document.getElementById("beat-bar");
       if (beat && beat.parentNode === document.body) {
@@ -193,7 +184,7 @@
       var conn = document.createElement("span");
       conn.id = "conn";
       conn.className = "conn";
-      conn.textContent = "connecting…";
+      conn.textContent = "…";
       mountTopbar("diag", conn.outerHTML);
     },
     mountAbout: function () {

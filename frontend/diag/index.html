@@ -11,9 +11,9 @@
   <div class="diag-grid">
     <section class="panel">
       <h2>Scenes</h2>
-      <div id="scenes" class="scenes"><span class="empty">loading…</span></div>
+      <div id="scenes" class="scenes"><span class="empty">…</span></div>
       <div class="transport">
-        <button type="button" id="beat">Beat (space)</button>
+        <button type="button" id="beat">Beat</button>
         <button type="button" id="deactivate">Deactivate</button>
         <button type="button" id="blackout" class="danger">Blackout</button>
         <button type="button" id="reload">Reload</button>
@@ -21,10 +21,10 @@
       <div id="log" class="log"></div>
     </section>
     <section class="panel">
-      <h2>Scene selection → sender</h2>
+      <h2>Latency</h2>
       <div id="last" class="big">— µs</div>
       <dl>
-        <dt>state</dt><dd id="state">unknown</dd>
+        <dt>state</dt><dd id="state">—</dd>
         <dt>samples</dt><dd id="count">0</dd>
         <dt>p50</dt><dd id="p50">—</dd>
         <dt>p99</dt><dd id="p99">—</dd>
@@ -32,10 +32,6 @@
         <dt>frames</dt><dd id="frames">—</dd>
         <dt>LEDfx</dt><dd id="ledfx">—</dd>
       </dl>
-      <div class="note">
-        Budget is 13 000 µs (13 ms) at p99, measured from scene selection to the
-        sender returning — not browser click, network, or fixture time.
-      </div>
     </section>
   </div>
 </main>

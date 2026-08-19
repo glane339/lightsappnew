@@ -40,7 +40,7 @@
 
   ShowClient.prototype.send = function (message) {
     if (!this.ready()) {
-      this._emit("status", { text: "not connected", cls: "dead" });
+      this._emit("status", { text: "off", cls: "dead" });
       return false;
     }
     this._socket.send(JSON.stringify(message));
@@ -70,10 +70,10 @@
     this._socket = socket;
 
     socket.onopen = function () {
-      self._emit("status", { text: "connected", cls: "live" });
+      self._emit("status", { text: "ok", cls: "live" });
     };
     socket.onclose = function () {
-      self._emit("status", { text: "disconnected — retrying", cls: "dead" });
+      self._emit("status", { text: "retry", cls: "dead" });
       if (!self._closed) {
         self._reconnectTimer = setTimeout(function () {
           self._open();

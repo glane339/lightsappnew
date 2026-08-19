@@ -34,7 +34,7 @@
     select.textContent = "";
     var blank = document.createElement("option");
     blank.value = "";
-    blank.textContent = items.length ? "Select…" : "None available";
+    blank.textContent = items.length ? "Select…" : "—";
     select.appendChild(blank);
     items.forEach(function (item) {
       var opt = document.createElement("option");
@@ -123,7 +123,7 @@
     var gigbarId = gigbarSelect.value;
     var keobinId = keobinSelect.value;
     if (!gigbarId || !keobinId) {
-      banner("error", "Both a GigBAR preset and a Keobin preset are required.");
+      banner("error", "Need both.");
       return;
     }
     var ids = [gigbarId, keobinId];
@@ -144,7 +144,7 @@
       idInput.disabled = true;
       deleteBtn.hidden = false;
       await refresh();
-      banner("ok", "Saved " + saved.id);
+      banner("ok", "Saved");
     } catch (err) {
       banner("error", err.message);
     }
@@ -161,7 +161,7 @@
       }
       await refresh();
       newLook();
-      banner("ok", "Deleted.");
+      banner("ok", "Deleted");
     } catch (err) {
       banner("error", err.message);
     }
@@ -180,7 +180,7 @@
         missingEl.className = "banner error show";
         missingEl.hidden = false;
         missingEl.textContent =
-          "GigBAR 2 and Keobin devices must both be in the patch. Run backend/seed_devices.py.";
+          "GigBAR and Keobin not in patch.";
         form.hidden = true;
         return;
       }

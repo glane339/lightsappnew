@@ -140,7 +140,7 @@
           {
             type: "mutex",
             channels: [21, 22],
-            message: "White and UV strobe cannot be used together.",
+            message: "White/UV exclusive",
           },
         ],
         modes: [
