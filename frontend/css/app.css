@@ -350,15 +350,32 @@ label.field {
 
 .scene-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 16px;
 }
 .scene-tile {
-  min-height: var(--tap);
-  font-size: 18px;
+  position: relative;
+  aspect-ratio: 1;
+  min-height: 240px;
+  font-size: 22px;
   border-radius: 12px;
   word-break: break-word;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 28px 16px 16px;
 }
+.scene-tile .hotkey {
+  position: absolute;
+  top: 10px;
+  left: 12px;
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--muted);
+}
+.scene-tile.on .hotkey { color: inherit; }
+.scene-tile .scene-name { text-align: center; }
 .scene-tile.on {
   box-shadow: 0 0 0 2px var(--accent);
 }

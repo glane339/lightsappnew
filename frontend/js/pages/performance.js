@@ -5,6 +5,7 @@
   var chrome = window.LightsChrome;
   chrome.mountPerformance();
 
+  var KEYS = "1234567890QWERTYUIOPASDFGHJKLZXCVBNM";
   var grid = document.getElementById("scenes");
   var beatBar = document.getElementById("beat-bar");
   var activeSceneId = null;
@@ -39,12 +40,23 @@
         grid.appendChild(empty);
         return;
       }
-      scenes.forEach(function (scene) {
+      scenes.forEach(function (scene, index) {
         var tile = document.createElement("button");
         tile.type = "button";
         tile.className = "scene-tile";
-        tile.textContent = scene.id;
         tile.dataset.scene = scene.id;
+        var key = KEYS.charAt(index);
+        if (key) {
+          tile.dataset.hotkey = key;
+          var badge = document.createElement("span");
+          badge.className = "hotkey";
+          badge.textContent = key;
+          tile.appendChild(badge);
+        }
+        var name = document.createElement("span");
+        name.className = "scene-name";
+        name.textContent = scene.id;
+        tile.appendChild(name);
         tile.classList.toggle("on", scene.id === activeSceneId);
         tile.onclick = function () {
           show.activate(scene.id);
@@ -90,14 +102,26 @@
   };
 
   document.addEventListener("keydown", function (event) {
-    if (event.code !== "Space") {
+    if (event.metaKey || event.ctrlKey || event.altKey) {
       return;
     }
-    if (event.target && event.target.closest("input, textarea, select, button, a")) {
+    if (event.target && event.target.closest("input, textarea, select")) {
+      return;
+    }
+    if (event.code === "Space") {
+      event.preventDefault();
+      show.beat();
+      return;
+    }
+    if (event.repeat || event.key.length !== 1) {
+      return;
+    }
+    var tile = grid.querySelector('[data-hotkey="' + event.key.toUpperCase() + '"]');
+    if (!tile) {
       return;
     }
     event.preventDefault();
-    show.beat();
+    show.activate(tile.dataset.scene);
   });
 
   loadScenes();
