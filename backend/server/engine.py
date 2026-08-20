@@ -219,7 +219,6 @@ class ShowEngine:
         return ShowState(
             active_scene_id=self._controller.active_scene_id,
             is_active=self._controller.is_active,
-            sensitivity=self._controller.sensitivity,
         )
 
     def sender_health(self) -> Dict[str, Any]:
@@ -366,7 +365,6 @@ class ShowEngine:
                 {
                     "active_scene_id": state.active_scene_id,
                     "is_active": state.is_active,
-                    "sensitivity": state.sensitivity,
                 },
             )
         )

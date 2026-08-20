@@ -32,7 +32,6 @@ class LedfxHealth(BaseModel):
 class StatusResponse(BaseModel):
     active_scene_id: Optional[str]
     is_active: bool
-    sensitivity: Optional[float]
     sender: SenderHealth
     ledfx: LedfxHealth
     latency: Dict[str, int]
@@ -71,7 +70,6 @@ def get_status(engine: EngineDep) -> StatusResponse:
     return StatusResponse(
         active_scene_id=state.active_scene_id,
         is_active=state.is_active,
-        sensitivity=state.sensitivity,
         sender=SenderHealth(**engine.sender_health()),
         ledfx=LedfxHealth(
             enabled=engine.ledfx_enabled,

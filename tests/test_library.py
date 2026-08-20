@@ -28,7 +28,6 @@ def test_round_trip_preserves_graph(data_root: Path) -> None:
     reloaded = Library.open(data_root, sync_ilda=False)
     assert scene.id in reloaded.scenes
     loaded = reloaded.scenes[scene.id]
-    assert loaded.sensitivity == 0.5
     assert loaded.preset_id == scene.preset_id
     preset = reloaded.presets[loaded.preset_id]
     wled_list = reloaded.wled_preset_lists[preset.wled_preset_list_id]

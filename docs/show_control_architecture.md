@@ -14,11 +14,12 @@ How a scene runs. Companion to [architecture.md](architecture.md); terminology f
 > [`runtime/scene_controller.py`](../backend/runtime/scene_controller.py), and
 > [`audio/beat_source.py`](../backend/audio/beat_source.py).
 >
-> What is still **Target**: real beat detection (the beat source is a protocol with a
-> manual implementation, no audio library chosen), E1.31 packets that would put the
-> universe buffer on the wire (the sender today is `NullTransport`), and authoring
-> UI. Laser output is severed from this path entirely — see
-> [laser_and_haze_safety.md](laser_and_haze_safety.md).
+> What is still **Target**: operator-visible audio health (silence vs dead capture),
+> E1.31 packets that would put the universe buffer on the wire unless
+> `dmx.transport` is `"e131"`, and full authoring UI. Live beat detection is
+> Current — [`audio/audio_engine_source.py`](../backend/audio/audio_engine_source.py)
+> feeds the show command queue. Laser output is severed from this path entirely —
+> see [laser_and_haze_safety.md](laser_and_haze_safety.md).
 
 ---
 
@@ -30,7 +31,7 @@ different owners, and different persistence rules.
 | Kind | Contains | Lifetime | Persisted? | Current owner |
 | --- | --- | --- | --- | --- |
 | **Preset configuration** | Scenes, lighting presets, DMX cue lists, looks, device states, fixtures, and how many beats each cue list holds per entry | Edited by the operator; survives restart | **Yes** — `data/*.json` | [`storage/library.py`](../backend/storage/library.py) |
-| **Scene state** | Which scene is active and its sensitivity | One scene activation | No | [`runtime/scene_controller.py`](../backend/runtime/scene_controller.py) |
+| **Scene state** | Which scene is active | One scene activation | No | [`runtime/scene_controller.py`](../backend/runtime/scene_controller.py) |
 | **Sequence state** | Per-cue-list: current index, beats elapsed, loop mode | One scene activation | No | [`runtime/sequencer.py`](../backend/runtime/sequencer.py), one instance per cue list |
 | **Output state** | Universe buffer; LEDfx's own idea of the active scene | Process lifetime | **No** | [`runtime/active.py`](../backend/runtime/active.py) (still a module global — [AF-M03](audit_findings.md#af-m03)) |
 
@@ -99,9 +100,6 @@ before the controller mutates its own state, so a scene that fails to resolve le
 the previous one running rather than half-replacing it and leaving the rig in a state
 that matches no scene at all.
 
-`scene.sensitivity` is exposed as `SceneController.sensitivity` for an audio processor
-to read, rather than pushed. Nothing consumes it yet.
-
 ### 3.2 Deactivation
 
 **Implemented as hold.** `deactivate()` stops sequencing and leaves the universe buffer
@@ -126,21 +124,14 @@ the strips lit. See
 
 ---
 
-## 4. Sensitivity propagation
+## 4. Sensitivity
 
-**Current:** `Scene.sensitivity` is bounded to 0.0–1.0
-([`models/Scene.py`](../backend/models/Scene.py)), which closes
-[AF-M02](audit_findings.md#af-m02) — negatives and NaN no longer validate, and the
-schema 3 → 4 migration clamped any value already on disk. It is exposed as
-`SceneController.sensitivity` and read by nothing, because no audio processor exists.
-
-One gap remains: **undefined precedence.** Is `AudioConfig.default_sensitivity` a
-fallback for scenes that omit the value (they cannot — it is required), a global
-multiplier, or dead config? Unresolved; see
+**Current:** per-scene sensitivity was unused at runtime and was dropped in schema 5.
+`AudioEngine` uses its own frozen config (library default `0.5`). See
 [audio_reactivity_architecture.md](audio_reactivity_architecture.md#51-sensitivity).
 
-**Target:** sensitivity flows one way only — Scene → Scene Controller → Audio
-Processor. The Audio Processor never reads the `Library`.
+**Target, if it returns:** a detector threshold owned by audio config, not by `Scene`,
+flowing into a new `AudioEngine` instance (frozen config cannot be patched).
 
 ---
 
@@ -207,18 +198,20 @@ nothing calls it yet. It must **not** happen on BPM change or on temporary beat 
 
 ## 6. Concurrency and race conditions
 
-**Current:** the operator server runs a show thread, a sender thread, and a WLED
-worker. The sender never blocks on I/O: it waits on `dmx_dirty` (or a keepalive
-timeout) and calls `NullTransport.send`. The universe buffer in
+**Current:** the operator server runs a show thread, a sender thread, a WLED
+worker, and — when a capture device is usable — an audio-engine worker. The sender
+never blocks on I/O: it waits on `dmx_dirty` (or a keepalive timeout) and calls
+`NullTransport.send` (or `E131Transport` when opted in). The universe buffer in
 [`runtime/active.py`](../backend/runtime/active.py) is still a module global; the
-whole-buffer swap in `DmxOutput.apply` is the torn-read mitigation. A real beat
-source with its own audio thread is still future work.
+whole-buffer swap in `DmxOutput.apply` is the torn-read mitigation. Detected beats
+join operator commands on the show queue ([D-016](decisions.md#d-016-audio-event-delivery-mechanism));
+they do not call `SceneController` from the capture thread.
 
-**Target:** the design will have at least three concurrent activities:
+**Concurrent activities:**
 
 | Activity | Frequency | Touches |
 | --- | --- | --- |
-| Audio analysis | continuous (audio callback) | emits beat events |
+| Audio analysis | continuous (blocking capture read) | emits beat events onto the show queue |
 | Sender loop | send-on-change + keepalive | reads universe buffers; later, E1.31 |
 | Operator UI | sporadic | activates scenes, edits the library |
 
@@ -230,10 +223,9 @@ The hazards:
    window is one reference swap — atomic under CPython's GIL. **Still unmitigated by
    design rather than by accident:** there is no lock, and the guarantee rests on an
    implementation detail of the interpreter.
-2. **Scene change mid-beat.** A beat arriving while the controller is swapping cue
-   lists could advance a sequencer that is being replaced. Partly mitigated: sequencers
-   are replaced wholesale by reference rather than mutated, and both are built before
-   either is installed. Not fully safe without a lock shared with beat handling.
+2. **Scene change mid-beat.** Activate and beat are both `ShowCommand`s on one show
+   thread, so they cannot interleave inside `SceneController`. Sequencers are still
+   replaced wholesale by reference, built before either is installed.
 3. **Library edits during playback.** The Scene Controller now holds resolved
    snapshots rather than live library references, so editing or deleting a cue list
    cannot corrupt a running show mid-cue — the change simply takes effect at the next
@@ -275,8 +267,8 @@ sequencer: no events arrive. The correct behaviour is:
   system — it makes silence indistinguishable from music in the output and hides
   audio device failures.
 - **Audio failure must be visible.** A dead input device should surface in the UI,
-  not merely present as a static-looking show. Logging exists now, but there is no UI
-  and no beat-source health signal, so this remains unaddressed.
+  not merely present as a static-looking show. Logging exists; `/api/status` and
+  Performance still have no silence-versus-dead bit.
 
 The first two are implemented and tested: with no beats, `SceneController` applies
 nothing after cue 0, and `ManualBeatSource` emits nothing at all while stopped.

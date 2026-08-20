@@ -52,7 +52,42 @@ def _submit_detected_beat(engine: ShowEngine) -> None:
         logger.warning("dropped detected beat because the show command queue is full")
 
 
-def _build_audio_source(input_device: str) -> AudioEngineBeatSource | None:
+def _default_input_device_selector() -> int | str | None:
+    """PortAudio's default input, used when ``AudioConfig.input_device`` is unset."""
+
+    try:
+        import sounddevice as sd
+    except ImportError:
+        logger.warning("live audio default device unavailable: sounddevice is not installed")
+        return None
+    try:
+        default_in = sd.default.device[0]
+    except Exception:
+        logger.exception("could not read PortAudio default input device")
+        return None
+    if isinstance(default_in, bool) or not isinstance(default_in, int) or default_in < 0:
+        logger.warning("PortAudio reports no default input device")
+        return None
+    try:
+        info = sd.query_devices(default_in)
+        name = info["name"] if isinstance(info, dict) else getattr(info, "name", default_in)
+        logger.info("using PortAudio default input [%s] %s", default_in, name)
+    except Exception:
+        logger.info("using PortAudio default input [%s]", default_in)
+    return default_in
+
+
+def _resolve_input_device(configured: Optional[str]) -> int | str | None:
+    """Prefer an explicit config selector; otherwise take the host default input."""
+
+    if configured is not None:
+        if not configured.strip():
+            return None
+        return configured
+    return _default_input_device_selector()
+
+
+def _build_audio_source(input_device: int | str) -> AudioEngineBeatSource | None:
     """Create the optional live source without importing hardware support at app startup."""
 
     try:
@@ -84,11 +119,8 @@ def create_app(
     library = Library.open(resolved_root, sync_ilda=False)
     authoring = AuthoringService(library)
     engine = ShowEngine(library, app_config, authoring=authoring)
-    audio_source = (
-        _build_audio_source(app_config.audio.input_device)
-        if app_config.audio.input_device is not None
-        else None
-    )
+    audio_selector = _resolve_input_device(app_config.audio.input_device)
+    audio_source = _build_audio_source(audio_selector) if audio_selector is not None else None
     if audio_source is not None:
         audio_source.subscribe(lambda: _submit_detected_beat(engine))
     events: "asyncio.Queue[ShowEvent]" = asyncio.Queue(maxsize=EVENT_QUEUE_MAX)
@@ -101,6 +133,9 @@ def create_app(
         engine.start()
         if audio_source is not None:
             audio_source.start()
+            logger.info("audio engine started")
+        else:
+            logger.info("audio engine not started: no usable input device")
         logger.info("show engine started")
         try:
             yield

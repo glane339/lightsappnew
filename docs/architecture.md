@@ -59,7 +59,8 @@ backend/
 │   ├── Active_DMX_Channels.py
 │   └── Active_ILDA_Frame.py  unreferenced; laser path severed
 ├── audio/
-│   └── beat_source.py       BeatSource protocol + ManualBeatSource
+│   ├── beat_source.py           BeatSource protocol + ManualBeatSource
+│   └── audio_engine_source.py   lights-audio-engine adapter (worker thread)
 ├── runtime/
 │   ├── active.py            Universe buffer + look flattening by address
 │   ├── sequencer.py         CueSequencer: pure beat-driven state machine
@@ -71,7 +72,7 @@ backend/
     ├── json_store.py        Atomic write, corrupt-file quarantine
     ├── records.py           On-disk schemas + the reference graph (10 collections)
     ├── library.py           In-memory object graph, CRUD, integrity, cascade
-    ├── migrations.py        Schema v4; v3→v4 adds cue-list beats, clamps sensitivity
+    ├── migrations.py        Schema v5; v4→v5 drops scene sensitivity
     ├── ilda_blobs.py        .ild file storage, id validation
     ├── config.py            AppConfig (dmx/ledfx/ilda/audio/ui)
     └── archive.py           Zip export/import with traversal guards
@@ -507,7 +508,7 @@ flowchart TB
     subgraph C["Current"]
         direction TB
         c1["SceneController"]
-        c2["BeatSource protocol<br/>(manual only, no detection)"]
+        c2["AudioEngineBeatSource<br/>+ ManualBeatSource"]
         c3["CueSequencer ×2<br/>independent"]
         c5["build_channels<br/>by patched address"]
         c6["one global 512 list"]
@@ -549,9 +550,9 @@ Full detail with severities in [audit_findings.md](audit_findings.md). Summary:
 | 2 | Beat duration is per cue *list*, not per entry | Every cue in a list holds for the same time |
 | 3 | No E1.31 packets | Symbolic `NullTransport` sender exists; the universe buffer still reaches no hardware |
 | 4 | Model/record duplication with hand-written converters | Every field change requires multiple edits |
-| 5 | Module-global universe buffer, no locking; LEDfx called on the beat path | Will race once an audio thread exists; a hung LEDfx stalls beats |
+| 5 | Module-global universe buffer, no locking | GIL-atomic whole-buffer swap is the torn-read mitigation; still not a lock |
 | 6 | No value-range validation on DMX channel values | Out-of-range values would reach the wire unclamped |
-| 7 | No real beat detection | The show cannot run from audio |
+| 7 | Capture death vs silence is not operator-visible | Looks hold (correct) but `/api/status` cannot tell a dead input from a quiet passage |
 | 8 | No app entry point, so nothing calls `configure_logging()` | Logging exists but only tests and scripts start it |
 
 Item 4 deserves nuance: separating the on-disk schema (`records.py`) from the

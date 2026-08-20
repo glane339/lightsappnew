@@ -62,7 +62,9 @@ Longer horizon in [roadmap.md](roadmap.md).
 2. **WS-4.4 · Actual E1.31 sender** — `E131Transport` behind `DmxTransport`; hand-rolled
    framing + byte tests; socket injected in tests; opt-in via config after box sign-off.
    See [WS-4.4](#44-real-sacn-sender) below.
-3. **WS-9 · Real beat detection** — live audio; `ManualBeatSource` stays for tests.
+3. **WS-9 · Real beat detection** — live audio is wired into look cycling;
+   remaining: capture health, WASAPI loopback as a named device, BPM in the UI.
+   `ManualBeatSource` stays for tests.
 4. **WS-11.2 · Full frontend** — Performance + Builder UI per
    [frontend_architecture.md](frontend_architecture.md); thin client of
    [authoring.md](authoring.md).
@@ -271,9 +273,9 @@ migratable through `REFERENCES` in [`records.py`](../backend/storage/records.py)
   scenes discards outgoing sequence state entirely; an empty cue list is a clean
   activation error, not a crash; the controller holds resolved snapshots rather than
   live `Library` references.
-- **Status.** **Done.** Sensitivity is exposed for an audio processor to read rather
-  than pushed, since there is no processor to push to. A failed activation leaves the
-  previous scene running.
+- **Status.** **Done.** Schema 5 dropped per-scene sensitivity; there is no
+  processor input left to push. A failed activation leaves the previous scene
+  running.
 - **Files.** [`runtime/scene_controller.py`](../backend/runtime/scene_controller.py),
   [`runtime/outputs.py`](../backend/runtime/outputs.py),
   [`tests/test_scene_controller.py`](../tests/test_scene_controller.py),
@@ -287,7 +289,8 @@ migratable through `REFERENCES` in [`records.py`](../backend/storage/records.py)
   block show logic.
 - **Acceptance.** The controller runs off subscribed beats; a stopped source emits
   nothing; BPM is carried for display and never drives sequencing.
-- **Status.** **Done** for the boundary. No real detector exists; see WS-9.
+- **Status.** **Done** for the boundary. Production also runs
+  [`AudioEngineBeatSource`](../backend/audio/audio_engine_source.py); see WS-9.
 - **Files.** [`audio/beat_source.py`](../backend/audio/beat_source.py).
 
 ### 3.4 Runtime state ownership
@@ -519,22 +522,22 @@ migratable through `REFERENCES` in [`records.py`](../backend/storage/records.py)
 - **Goal.** A `BeatSource` implementation driven by real audio, behind the protocol
   WS-3.3 already established.
 - **Why.** `ManualBeatSource` proves the show logic but cannot run a show.
-- **Open questions, none of them settled.**
-  - **Licensing.** aubio is the best technical fit — C, causal, built for live beat
-    tracking — but it is GPL, not MIT/BSD, which constrains distribution. It has also
-    seen no release in years, so Python 3.12 wheels on Windows are a risk.
-  - **Alternatives.** `libsonare` (C++ core, permissive, has a streaming analyzer) and
-    `sonara` (Rust, fast, but beat tracking looks batch-oriented). Neither is as proven
-    for live use.
-  - **Capture is separate.** All of these take buffers; getting audio in needs
-    `sounddevice` or equivalent.
-  - **LEDfx already captures audio** on the same machine. Two processes competing for
-    the same input or loopback device is a real Windows problem, and it is worth
-    checking whether LEDfx can supply beat data before adding a second analyzer.
+- **Decision.** Use [`lights-audio-engine`](https://github.com/glane339/lights-audio-engine)
+  (pinned by commit SHA in `requirements.txt`, with the `probe` extra for
+  `sounddevice`). Capture is blocking `InputStream.read` on a worker thread. Beats
+  enter the show as `ShowCommand(BEAT)` ([D-016](decisions.md#d-016-audio-event-delivery-mechanism)).
+  `ManualBeatSource` stays for tests. Unset `input_device` uses PortAudio's default
+  input; a blank selector or missing device leaves the show on manual tap.
 - **Acceptance.** Beats arrive from live audio; the suite still runs with no audio
   device; BPM is display-only.
-- **Status.** Not started.
-- **Files.** `backend/audio/`.
+- **Status.** **Partial.** Capture starts on app lifespan and detected beats advance
+  cue lists (integration-tested with a fake `run_engine`). Not done: operator-visible
+  silence vs dead capture, BPM/level on `/api/status` or Performance, first-class
+  WASAPI loopback (still a raw device name). LEDfx may still compete for the same
+  input.
+- **Files.** [`backend/audio/`](../backend/audio/),
+  [`backend/server/app.py`](../backend/server/app.py),
+  [`tests/test_audio_integration.py`](../tests/test_audio_integration.py).
 
 ---
 
@@ -558,7 +561,8 @@ migratable through `REFERENCES` in [`records.py`](../backend/storage/records.py)
 - **Why.** Three open decisions block WS-3, WS-4, and WS-5 respectively.
 - **Dependencies.** The corresponding investigations.
 - **Acceptance.** No Open decision blocks an in-progress workstream.
-- **Status.** D-018 **Accepted**. D-017 **Accepted** (unicast). D-016 remains Open.
+- **Status.** D-018 **Accepted**. D-017 **Accepted** (unicast). D-016 **Accepted**
+  (queue delivery).
 - **Files.** [`decisions.md`](decisions.md).
 
 ---

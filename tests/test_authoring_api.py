@@ -89,7 +89,7 @@ def _create_playable_scene(client: TestClient, device_id: str, scene_id: str = "
 
     scene = client.post(
         "/api/scenes",
-        json={"id": scene_id, "preset_id": preset.json()["id"], "sensitivity": 0.4},
+        json={"id": scene_id, "preset_id": preset.json()["id"]},
     )
     assert scene.status_code == 201, scene.text
     return scene.json()
@@ -105,7 +105,7 @@ def test_http_create_graph_then_activate(data_root: Path) -> None:
 
         scene = _create_playable_scene(client, device_id)
         assert scene["id"] == "red-wash"
-        assert scene["sensitivity"] == 0.4
+        assert "sensitivity" not in scene
 
         listed = client.get("/api/scenes").json()["scenes"]
         assert listed[0]["id"] == "red-wash"
@@ -323,7 +323,7 @@ def test_http_device_preset_look_and_list_stack(data_root: Path) -> None:
 
         scene = client.post(
             "/api/scenes",
-            json={"id": "red-wash", "preset_id": "red-wash-stripes", "sensitivity": 0.5},
+            json={"id": "red-wash", "preset_id": "red-wash-stripes"},
         )
         assert scene.status_code == 201, scene.text
         assert scene.json()["preset_id"] == "red-wash-stripes"

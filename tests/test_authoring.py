@@ -58,7 +58,7 @@ class _SilentWled:
         return None
 
 
-def test_create_scene_defaults_sensitivity_from_audio_config(library: Library) -> None:
+def test_create_scene_stores_the_preset(library: Library) -> None:
     authoring = AuthoringService(library)
     preset = _playable_preset(authoring, library)
 
@@ -66,7 +66,6 @@ def test_create_scene_defaults_sensitivity_from_audio_config(library: Library) -
 
     assert scene.id == "red-wash"
     assert scene.preset_id == preset.id
-    assert scene.sensitivity == library.config.audio.default_sensitivity
     assert library.get(SCENES, "red-wash").id == "red-wash"
 
 
@@ -92,23 +91,21 @@ def test_create_scene_rejects_preset_with_empty_cue_list(library: Library) -> No
         authoring.create_scene(preset.id)
 
 
-def test_create_scene_rejects_out_of_range_sensitivity(library: Library) -> None:
+def test_update_scene_changes_preset_without_replacing_id(library: Library) -> None:
     authoring = AuthoringService(library)
-    preset = _playable_preset(authoring, library)
-    with pytest.raises(AuthoringInvalid, match="sensitivity"):
-        authoring.create_scene(preset.id, sensitivity=1.5)
+    first = _playable_preset(authoring, library)
+    device = _device(library)
+    look = _look(authoring, device)
+    dmx_list = authoring.create_dmx_preset_list([look.id], 2)
+    wled_list = authoring.create_wled_preset_list(["scene-alpha"], 4)
+    second = authoring.create_preset(dmx_list.id, wled_list.id)
+    scene = authoring.create_scene(first.id)
 
-
-def test_update_scene_changes_sensitivity_without_replacing_id(library: Library) -> None:
-    authoring = AuthoringService(library)
-    preset = _playable_preset(authoring, library)
-    scene = authoring.create_scene(preset.id, sensitivity=0.2)
-
-    updated = authoring.update_scene(scene.id, preset_id=preset.id, sensitivity=0.8)
+    updated = authoring.update_scene(scene.id, preset_id=second.id)
 
     assert updated.id == scene.id
-    assert updated.sensitivity == 0.8
-    assert library.get(SCENES, scene.id).sensitivity == 0.8
+    assert updated.preset_id == second.id
+    assert library.get(SCENES, scene.id).preset_id == second.id
 
 
 def test_get_unknown_scene_is_not_found(library: Library) -> None:
@@ -367,12 +364,11 @@ def test_create_scene_round_trips_through_save_load(data_root: Path) -> None:
     library = Library.open(data_root, sync_ilda=False)
     authoring = AuthoringService(library)
     preset = _playable_preset(authoring, library)
-    scene = authoring.create_scene(preset.id, sensitivity=0.3, scene_id="round-trip")
+    scene = authoring.create_scene(preset.id, scene_id="round-trip")
 
     reloaded = Library.open(data_root, sync_ilda=False)
     loaded = reloaded.get(SCENES, "round-trip")
     assert loaded.preset_id == preset.id
-    assert loaded.sensitivity == 0.3
     assert reloaded.get(PRESETS, preset.id).dmx_preset_list_id == preset.dmx_preset_list_id
 
 

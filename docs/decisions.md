@@ -14,7 +14,7 @@ Follow-up.
 | ID | Decision | Status |
 | --- | --- | --- |
 | [D-001](#d-001-scene-is-the-top-level-manually-selected-unit) | Scene is the top-level manually selected unit | Accepted |
-| [D-002](#d-002-audio-processing-owns-timing-not-lighting-decisions) | Audio processing owns timing, not lighting decisions | Proposed |
+| [D-002](#d-002-audio-processing-owns-timing-not-lighting-decisions) | Audio processing owns timing, not lighting decisions | Accepted |
 | [D-003](#d-003-dmx-and-wled-share-one-beat-sequencing-implementation) | DMX and WLED share one beat-sequencing implementation | Accepted |
 | [D-004](#d-004-ledfx-owns-wled-output) | LEDfx owns WLED output | Accepted |
 | [D-005](#d-005-transient-runtime-state-is-never-persisted) | Transient runtime state is never persisted | Accepted |
@@ -28,7 +28,7 @@ Follow-up.
 | [D-013](#d-013-hardware-output-defaults-to-a-null-implementation) | Hardware output defaults to a null implementation | Accepted |
 | [D-014](#d-014-fixtures-become-first-class-persisted-objects) | Fixtures become first-class persisted objects | Proposed |
 | [D-015](#d-015-the-reference-graph-stays-declarative) | The reference graph stays declarative | Accepted |
-| [D-016](#d-016-audio-event-delivery-mechanism) | Audio event delivery mechanism | Open |
+| [D-016](#d-016-audio-event-delivery-mechanism) | Audio event delivery mechanism | Accepted |
 | [D-017](#d-017-sacn-unicast-versus-multicast) | sACN unicast versus multicast | Accepted |
 | [D-018](#d-018-ledfx-preset-identifier-form) | LEDfx preset identifier form | Accepted |
 | [D-019](#d-019-send-on-change--keepalive-cadence) | Send-on-change + keepalive cadence | Accepted |
@@ -46,9 +46,9 @@ point. No UI calls it yet.
 **Context.** Something has to be the unit an operator picks. `Scene` sits at the top
 of the reference graph: it is a `ROOT_COLLECTION`
 ([`records.py:87`](../backend/storage/records.py#L87)), nothing references it, and
-everything else is reachable from it. It holds exactly the three things the intended
-design calls for — a lighting preset, an ILDA frame list, and a sensitivity value
-([`models/Scene.py`](../backend/models/Scene.py)).
+everything else is reachable from it. It holds a lighting preset and an optional ILDA
+frame list ([`models/Scene.py`](../backend/models/Scene.py)). Detector sensitivity is
+not a scene field (schema 5).
 
 **Rationale.** Manual selection removes an entire class of complexity: no cue stacks,
 no timecode, no automatic transitions, no scheduling. The operator is the sequencer
@@ -71,9 +71,10 @@ entry point that calls it is not. See
 
 ## D-002: Audio processing owns timing, not lighting decisions
 
-**Status:** Partially implemented — [`audio/beat_source.py`](../backend/audio/beat_source.py)
-defines the boundary (`BeatSource` protocol, `ManualBeatSource`); no signal
-processing or live capture exists.
+**Status:** Accepted and implemented — [`audio/beat_source.py`](../backend/audio/beat_source.py)
+is the lighting-side protocol; [`audio/audio_engine_source.py`](../backend/audio/audio_engine_source.py)
+adapts `lights-audio-engine`. `backend/audio/` does not import `models` or `storage`.
+Detection itself lives in the other repository.
 
 **Context.** The audio subsystem could plausibly be given responsibility for
 "reacting" — mapping levels straight to channel values. The intended design says it
@@ -86,13 +87,15 @@ and makes the entire show-control layer testable with a synthetic beat list.
 **Consequences.** The audio module must not import from `backend/models/` or
 `backend/storage/`. Beat events, not BPM, are the sequencing input, which means
 tempo drift needs no resync logic (D-003). Level-reactive effects (intensity →
-dimmer) are deliberately deferred — they would reintroduce the coupling.
+dimmer) are deliberately deferred — they would reintroduce the coupling. The app
+factory may subscribe the adapter to the show command queue; that is wiring, not
+analysis.
 
 **Alternatives.** Direct audio-to-fixture mapping (rejected: untestable, and it
 duplicates what LEDfx already does well for LED strips).
 
-**Follow-up.** Sensitivity semantics are undefined — see
-[AF-M02](audit_findings.md#af-m02) and
+**Follow-up.** Per-scene sensitivity was unused and dropped in schema 5. Engine
+threshold stays in `AudioEngine` until a later config owns it. See
 [audio_reactivity_architecture.md](audio_reactivity_architecture.md#51-sensitivity).
 
 ---
@@ -515,11 +518,33 @@ an ORM (rejected: D-006).
 
 ## D-016: Audio event delivery mechanism
 
-**Status:** **Open.**
+**Status:** Accepted (2026-08-19).
 
-Callback-on-audio-thread versus a queue drained by a show-control thread. Recommended:
-queue, so lighting logic never runs on the real-time audio callback. Blocks the
-threading design. See
+**Decision.** **Queue.** Detected beats enter the show as `ShowCommand(BEAT)` on the
+existing command queue. The capture worker (blocking `InputStream.read`, not a
+PortAudio callback) must not run lighting logic. `AudioEngineBeatSource` notifies
+subscribers on that worker; the app factory subscriber only calls
+`ShowEngine.submit` with `put_nowait`. `SceneController.on_beat()` runs on the show
+thread. Manual tap uses the same command kind.
+
+**Rationale.** Isolates PortAudio from cue sequencing, LEDfx HTTP, and universe
+writes. One show thread already owns `SceneController` without a lock; another
+producer on that queue is the seam WS-9 needed. A callback into the controller from
+the capture thread would put lighting on the audio path and reintroduce the races
+in [show_control_architecture.md](show_control_architecture.md#6-concurrency-and-race-conditions).
+
+**Consequences.** A full 64-slot queue drops the beat (`ShowBusyError`) rather than
+blocking capture. Detected beats currently share that queue with activate,
+deactivate, and blackout. Mid-cue beats still exercise the F-01 ack-by-position
+path. Those are residual risks under dense live audio, not a reason to move
+lighting onto the capture thread.
+
+**Alternatives.** Callback-on-audio-thread (rejected: a slow listener causes
+dropouts). A second dedicated beat queue (possible later if operator commands are
+starved).
+
+**Follow-up.** Operator-visible silence vs dead capture, and whether beats should
+have reserved queue slots. See
 [audio_reactivity_architecture.md](audio_reactivity_architecture.md#6-timing-ownership-and-event-delivery).
 
 ---

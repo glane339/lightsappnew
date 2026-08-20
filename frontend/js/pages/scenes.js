@@ -11,7 +11,6 @@
   var idInput = document.getElementById("scene-id");
   var dmxSelect = document.getElementById("dmx-list");
   var wledSelect = document.getElementById("wled-list");
-  var sensitivityInput = document.getElementById("sensitivity");
   var deleteBtn = document.getElementById("delete-btn");
 
   var editingId = null;
@@ -65,7 +64,6 @@
     deleteBtn.hidden = true;
     fillSelect(dmxSelect, dmxLists, "");
     fillSelect(wledSelect, wledLists, "");
-    sensitivityInput.value = "";
     banner("", "");
     renderLibrary();
   }
@@ -75,7 +73,6 @@
     idInput.value = scene.id;
     idInput.disabled = true;
     deleteBtn.hidden = false;
-    sensitivityInput.value = String(scene.sensitivity);
     var lists = listsForPreset(scene.preset_id);
     fillSelect(dmxSelect, dmxLists, lists.dmx);
     fillSelect(wledSelect, wledLists, lists.wled);
@@ -130,22 +127,12 @@
       banner("error", "Need DMX and WLED.");
       return;
     }
-    var sensitivityRaw = sensitivityInput.value.trim();
-    var sensitivity;
-    if (sensitivityRaw !== "") {
-      sensitivity = Number(sensitivityRaw);
-      if (!(sensitivity >= 0 && sensitivity <= 1)) {
-        banner("error", "Sensitivity 0–1.");
-        return;
-      }
-    }
     try {
       var preset = await findOrCreatePreset(dmxListId, wledListId);
       var saved;
       if (editingId) {
         saved = await api.scenes.update(editingId, {
           preset_id: preset.id,
-          sensitivity: sensitivity === undefined ? 0.5 : sensitivity,
           ilda_frame_list_id: ildaByScene[editingId] || null,
         });
       } else {
@@ -154,16 +141,12 @@
         if (slug) {
           body.id = slug;
         }
-        if (sensitivity !== undefined) {
-          body.sensitivity = sensitivity;
-        }
         saved = await api.scenes.create(body);
       }
       editingId = saved.id;
       idInput.value = saved.id;
       idInput.disabled = true;
       deleteBtn.hidden = false;
-      sensitivityInput.value = String(saved.sensitivity);
       await refresh();
       renderLibrary();
       banner("ok", "Saved");

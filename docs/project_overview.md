@@ -30,12 +30,14 @@ remote-access requirement in the repository today.
 ## Current maturity
 
 > **The repository has a persistence layer, a beat-driven show-control core, an
-> operator HTTP server, and a symbolic DMX sender.** It is not yet a complete show:
-> beats are still manual, nothing transmits E1.31, and authoring UI is a picker only.
+> operator HTTP server, live audio into look cycling, and a symbolic DMX sender.**
+> It is not yet a complete show: capture health is not on the UI, nothing transmits
+> E1.31 until opted in, and authoring UI is a picker only.
 
 There is an app entry point (`backend/main.py`) and a no-build operator page.
-Real audio capture and DMX network output are absent. A pytest suite covers storage,
-sequencing, outputs, the sender wake path, and the server.
+Live audio starts with the process when a capture device is usable. A pytest suite
+covers storage, sequencing, outputs, the sender wake path, the server, and the audio
+adapter (without opening PortAudio).
 
 The server/runtime layer was **independently audited at `acc52a7`**
 ([Audit v3](audit_findings.md#audit-v3--operator-server--runtime), 2026-08-13):
@@ -48,12 +50,12 @@ Nothing is hardware-proven; the latency evidence is software-path only.
 
 | Layer | Status | Evidence |
 | --- | --- | --- |
-| Persistence / storage | **Substantially implemented** | [`backend/storage/`](../backend/storage/) — schema v4, migrations, integrity |
+| Persistence / storage | **Substantially implemented** | [`backend/storage/`](../backend/storage/) — schema v5, migrations, integrity |
 | Data model | **Mostly implemented** | 12 models; `DMX_Device` and cue-list `beats` per list; per-*entry* beats still absent |
 | Runtime / sequencing | **Core implemented, wired in server** | [`runtime/scene_controller.py`](../backend/runtime/scene_controller.py), [`sequencer.py`](../backend/runtime/sequencer.py), [`outputs.py`](../backend/runtime/outputs.py); driven by [`server/engine.py`](../backend/server/engine.py) |
 | Operator server | **M1 done + authoring HTTP** | [`backend/main.py`](../backend/main.py), FastAPI on `0.0.0.0:8800`, WebSocket `/ws/show`, REST `/api/show/*` and typed authoring CRUD |
-| Beat source boundary | **Manual in production; protocol only for audio** | [`audio/beat_source.py`](../backend/audio/beat_source.py); operator page sends `beat`; no detector |
-| Audio / beat detection | **Absent** | `AudioConfig` and `Scene.sensitivity` persist settings; no signal processing |
+| Beat source boundary | **Protocol + live adapter** | [`audio/beat_source.py`](../backend/audio/beat_source.py), [`audio/audio_engine_source.py`](../backend/audio/audio_engine_source.py); manual tap still works |
+| Audio / beat detection | **Wired into look cycling** | `lights-audio-engine` on a worker; beats are `ShowCommand(BEAT)`. Silence vs dead capture is not on `/api/status` |
 | DMX transport (E1.31/sACN) | **Symbolic only** | [`runtime/sender.py`](../backend/runtime/sender.py) — `NullTransport` + send-on-change thread; no packets, no sockets |
 | WLED / LEDfx integration | **Wired off show thread** | [`AsyncCueOutput`](../backend/runtime/outputs.py) + worker in [`server/engine.py`](../backend/server/engine.py); `LedfxConfig.enabled` defaults false |
 | ILDA processing | **Storage only** | [`.ild` blob store](../backend/storage/ilda_blobs.py); nothing parses or plays |
@@ -150,8 +152,10 @@ Ranked by how much they block a working system:
    scalar for the whole list (schema v4); the sequencers are built and tested against
    that shape. Variable hold times per cue entry remain future work
    ([AF-H02](audit_findings.md#af-h02)).
-3. **No real beat detection** — beats are manual (operator page / REST) or scripted
-   in tests; nothing reads live audio.
+3. **Capture health is not operator-visible** — beats stop and looks hold when the
+   device dies, which is correct lighting behaviour, but `/api/status` and Performance
+   cannot tell silence from a dead input
+   ([audio_reactivity_architecture.md §8](audio_reactivity_architecture.md#8-error-and-silence-behaviour)).
 4. **E1.31 is written but unproven.** [`runtime/e131.py`](../backend/runtime/e131.py)
    and `E131Transport` frame and send real packets, verified over loopback and by
    byte-level tests. `dmx.transport` defaults to `"null"`, so nothing transmits until
@@ -217,8 +221,9 @@ list is handed to an ILDA processor.
 [`ShowEngine`](../backend/server/engine.py) (show thread + sender thread + WLED worker),
 and accepts scene commands over WebSocket or REST. A scene activation resolves looks,
 writes the universe buffer, calls `publish()`, and the sender thread invokes
-`NullTransport.send`. Beats are manual taps until WS-9. LEDfx calls happen on a
-background worker when enabled. Nothing leaves the machine as E1.31.
+`NullTransport.send`. Detected beats and manual taps both enqueue `ShowCommand(BEAT)`.
+LEDfx calls happen on a background worker when enabled. Nothing leaves the machine as
+E1.31 until `dmx.transport` is `"e131"`.
 
 ---
 
@@ -231,8 +236,9 @@ background worker when enabled. Nothing leaves the machine as E1.31.
    with the real transport ([D-013](decisions.md#d-013-hardware-output-defaults-to-a-null-implementation),
    [D-017](decisions.md#d-017-sacn-unicast-versus-multicast),
    [D-020](decisions.md#d-020-hand-rolled-e131-framing)).
-2. **Real beat detection (WS-9)** — WASAPI loopback adapter on the existing command
-   queue; keep `ManualBeatSource` for tests.
+2. **Finish WS-9 operator loop** — WASAPI loopback as `input_device` when the music
+   is on the same PC; silence vs dead capture on `/api/status` and Performance; BPM
+   display-only. `ManualBeatSource` stays for tests.
 3. **Full operator UI (WS-11.2)** — Performance + Builder per
    [frontend_architecture.md](frontend_architecture.md); thin client of
    [authoring.md](authoring.md).
@@ -247,27 +253,28 @@ Detail: [current_sprint.md § Future plans](current_sprint.md#future-plans) and
 ```mermaid
 flowchart LR
     subgraph now["Implemented today"]
-        S1["JSON collections<br/>storage/ (schema v4)"]
+        S1["JSON collections<br/>storage/ (schema v5)"]
         S2["Library + integrity"]
         S3["SceneController<br/>+ sequencers"]
         S4["ShowEngine<br/>+ operator server"]
         S5["SenderThread<br/>NullTransport"]
         S6["LEDfx client + sync<br/>+ WLED worker"]
         S7["AuthoringService<br/>typed HTTP"]
-        S8["pytest suite<br/>171 tests"]
+        S8["AudioEngineBeatSource<br/>+ look cycling"]
         S1 --> S2 --> S3 --> S4
         S3 --> S5
         S4 --> S6
         S4 --> S7
+        S4 --> S8
     end
     subgraph gap["Not implemented"]
         G1["E1.31 packets<br/>E131Transport"]
-        G2["Real beat detection"]
+        G2["Audio health / loopback UX"]
         G4["Full frontend<br/>WS-11.2"]
         G5["ILDA output"]
     end
     S5 -.->|"WS-4.4"| G1
-    S4 -.-> G2
+    S8 -.-> G2
     S7 -.-> G4
 ```
 

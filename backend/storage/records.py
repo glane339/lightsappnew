@@ -20,7 +20,6 @@ class SceneRecord(BaseModel):
     id: str
     preset_id: str
     ilda_frame_list_id: Optional[str] = None
-    sensitivity: float
 
 
 class PresetRecord(BaseModel):

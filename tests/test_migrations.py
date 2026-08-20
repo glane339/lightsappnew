@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from storage.json_store import StorageError, write_collection, write_json
+from storage.json_store import StorageError, read_json, write_collection, write_json
 from storage.migrations import SCHEMA_VERSION, migrate, snapshot, stored_version
 from storage.paths import backups_dir, config_path, ensure_layout
 from storage.records import (
@@ -205,28 +205,32 @@ def test_migrate_v3_makes_cue_lists_playable(data_root: Path) -> None:
     assert wled_lists["wl-set"]["beats"] == 8
 
 
-def test_migrate_v3_clamps_scene_sensitivity(data_root: Path) -> None:
+def test_migrate_v4_drops_scene_sensitivity(data_root: Path) -> None:
     from storage.json_store import read_collection
 
     ensure_layout(data_root)
-    write_json(config_path(data_root), {"schema_version": 3})
+    write_json(
+        config_path(data_root),
+        {
+            "schema_version": 4,
+            "audio": {"input_device": None, "default_sensitivity": 0.5},
+        },
+    )
     write_collection(
         SCENES,
         {
             "high": {"id": "high", "preset_id": "p", "sensitivity": 4.5},
-            "low": {"id": "low", "preset_id": "p", "sensitivity": -2.0},
-            "nan": {"id": "nan", "preset_id": "p", "sensitivity": float("nan")},
             "fine": {"id": "fine", "preset_id": "p", "sensitivity": 0.25},
         },
-        3,
+        4,
         data_root,
     )
 
     assert migrate(data_root) == SCHEMA_VERSION
 
     scenes = read_collection(SCENES, data_root)
-    assert scenes["high"]["sensitivity"] == 1.0
-    assert scenes["low"]["sensitivity"] == 0.0
-    # NaN cannot be clamped into range, so it falls back to the midpoint.
-    assert scenes["nan"]["sensitivity"] == 0.5
-    assert scenes["fine"]["sensitivity"] == 0.25
+    assert "sensitivity" not in scenes["high"]
+    assert "sensitivity" not in scenes["fine"]
+    assert scenes["high"]["preset_id"] == "p"
+    config = read_json(config_path(data_root), data_root)
+    assert "default_sensitivity" not in (config or {}).get("audio", {})

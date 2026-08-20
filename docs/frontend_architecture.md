@@ -88,13 +88,12 @@ looks → cue lists → scenes), matching the creation hierarchy in [authoring.m
 
 ### Beat indicator
 
-A bar across the top of the page flashes on each beat — the visual metronome until
-WS-9 (real audio) lands.
+A bar across the top of the page flashes on each beat — the visual metronome.
 
-- **Today:** manual beat tap (spacebar or a hidden/debug control) sends
-  `{"t":"beat"}`; the flash can follow the tap locally.
-- **Target:** server pushes `{t:"beat"}` on every beat whether the source is manual
-  or the audio thread, so Performance never needs to know where beats come from.
+- **Today:** the server pushes `{t:"beat"}` for both a manual tap and a detected
+  beat. Performance must flash from that event, not from a local key-up.
+- **Still missing:** BPM, level, and silence-versus-dead capture. Those are WS-9
+  remainder, not a second beat path.
 
 Do not put the M1 µs latency panel on this page; it distracts during a show.
 
@@ -242,7 +241,7 @@ Small server changes to support the UI as designed:
 
 | Item | Why | Status |
 | --- | --- | --- |
-| `{t:"beat"}` on `/ws/show` | Beat indicator must flash when beats come from WS-9, not only from local tap | Not implemented |
+| `{t:"beat"}` on `/ws/show` | Beat indicator must flash for live audio as well as a tap | **Done** — show thread emits `beat` for every `ShowCommand(BEAT)` |
 | `POST /api/ledfx/refresh` | One-shot scene sync for WLED list builder | Not implemented |
 | Scene save helper (optional) | `POST /api/scenes` accepting `dmx_preset_list_id` + `wled_preset_list_id` without exposing `Preset` ids | Not implemented |
 | Fixture profiles in `frontend/js/fixtures/` | Transcribe [docs/fixtures/](fixtures/README.md) for editor UI; storage unchanged | Not implemented |

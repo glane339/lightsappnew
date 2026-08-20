@@ -198,7 +198,6 @@ class Library:
                 id=record.id,
                 preset_id=record.preset_id,
                 ilda_frame_list_id=record.ilda_frame_list_id,
-                sensitivity=record.sensitivity,
             )
         if collection == PRESETS:
             return Preset(
@@ -298,7 +297,6 @@ class Library:
                 id=obj.id,
                 preset_id=obj.preset_id,
                 ilda_frame_list_id=obj.ilda_frame_list_id,
-                sensitivity=obj.sensitivity,
             )
         if collection == PRESETS:
             return PresetRecord(

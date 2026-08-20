@@ -48,6 +48,12 @@ def data_root(tmp_path: Path) -> Path:
 def _reset_logging() -> None:
     reset_logging_for_tests()
     yield
+
+
+@pytest.fixture(autouse=True)
+def _no_default_audio_device(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep TestClient from opening a real PortAudio stream when no device is configured."""
+    monkeypatch.setattr("server.app._default_input_device_selector", lambda: None)
     reset_logging_for_tests()
 
 
@@ -71,7 +77,6 @@ def build_minimal_scene_graph(library: Library) -> Scene:
     scene = Scene(
         preset_id=preset.id,
         ilda_frame_list_id=frame_list.id,
-        sensitivity=0.5,
     )
 
     library.add(device)
@@ -131,7 +136,7 @@ def build_cycling_scene_graph(
     dmx_list = DMX_Preset_List(dmx_preset_ids=dmx_preset_ids, beats=dmx_beats)
     wled_list = WLED_Preset_List(wled_preset_ids=wled_preset_ids, beats=wled_beats)
     preset = Preset(dmx_preset_list_id=dmx_list.id, wled_preset_list_id=wled_list.id)
-    scene = Scene(preset_id=preset.id, sensitivity=0.5)
+    scene = Scene(preset_id=preset.id)
 
     library.add(dmx_list)
     library.add(wled_list)

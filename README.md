@@ -7,10 +7,10 @@ Show-control application for a lighting rig: DMX over E1.31, WLED via LEDfx, and
 > forward — [D-023](docs/decisions.md#d-023-a-look-is-a-dmx_preset).
 
 **Current state:** persistence layer, beat-driven show-control core, operator HTTP
-server, and an E1.31 sender that frames and transmits real sACN — but stays off until
-`dmx.transport` is set to `"e131"` in the local config, so a fresh install emits
-nothing. Real audio capture is still not implemented; beats are manual. The
-server/runtime layer was independently audited at `acc52a7`
+server, live audio capture that advances looks on detected beats, and an E1.31 sender
+that frames and transmits real sACN — but stays off until `dmx.transport` is set to
+`"e131"` in the local config, so a fresh install emits nothing. Manual tap remains as
+a fallback. The server/runtime layer was independently audited at `acc52a7`
 ([Audit v3](docs/audit_findings.md#audit-v3--operator-server--runtime)):
 **READY WITH MINOR FIXES**. Universe **1** and the switch destination are documented
 and the box **blacks out when packets stop**; transport mode is **unicast**
@@ -25,7 +25,7 @@ reached the rig yet. See
   - `storage/` — JSON persistence, integrity, migrations, archive
   - `runtime/` — scene controller, cue sequencer, DMX/WLED outputs, universe buffer, E1.31 framing and sender
   - `server/` — FastAPI app, show engine, control routes
-  - `audio/` — beat source protocol (manual implementation only; no detector)
+  - `audio/` — beat source protocol, `lights-audio-engine` adapter, manual source for tests
   - `ledfx/` — LEDfx HTTP client and scene sync (null by default)
   - `config/` — compile-time defaults that seed persisted `AppConfig`
   - `logging_setup.py` — file + stderr logging into the data-folder `logs/`

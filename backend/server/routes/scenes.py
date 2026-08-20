@@ -18,7 +18,6 @@ router = APIRouter(prefix="/api", tags=["scenes"])
 class SceneSummary(BaseModel):
     id: str
     preset_id: str
-    sensitivity: float
 
 
 class SceneListResponse(BaseModel):
@@ -27,14 +26,12 @@ class SceneListResponse(BaseModel):
 
 class CreateSceneRequest(BaseModel):
     preset_id: str
-    sensitivity: Optional[float] = None
     ilda_frame_list_id: Optional[str] = None
     id: Optional[str] = None
 
 
 class UpdateSceneRequest(BaseModel):
     preset_id: str
-    sensitivity: float
     ilda_frame_list_id: Optional[str] = None
 
 
@@ -42,7 +39,7 @@ class UpdateSceneRequest(BaseModel):
 def list_scenes(authoring: AuthoringDep) -> SceneListResponse:
     return SceneListResponse(
         scenes=[
-            SceneSummary(id=scene.id, preset_id=scene.preset_id, sensitivity=scene.sensitivity)
+            SceneSummary(id=scene.id, preset_id=scene.preset_id)
             for scene in authoring.list_all(SCENES)
         ]
     )
@@ -57,7 +54,6 @@ def get_scene(scene_id: str, authoring: AuthoringDep) -> Scene:
 def create_scene(body: CreateSceneRequest, authoring: AuthoringDep) -> Scene:
     return authoring.create_scene(
         body.preset_id,
-        sensitivity=body.sensitivity,
         ilda_frame_list_id=body.ilda_frame_list_id,
         scene_id=body.id,
     )
@@ -68,7 +64,6 @@ def update_scene(scene_id: str, body: UpdateSceneRequest, authoring: AuthoringDe
     return authoring.update_scene(
         scene_id,
         preset_id=body.preset_id,
-        sensitivity=body.sensitivity,
         ilda_frame_list_id=body.ilda_frame_list_id,
     )
 

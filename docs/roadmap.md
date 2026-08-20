@@ -47,7 +47,8 @@ clean `requirements.txt`, and add logging.
   resolves.
 - The three highest-impact model problems are written down with evidence
   ([AF-H01](audit_findings.md#af-h01)–[AF-H03](audit_findings.md#af-h03)).
-- Open decisions are enumerated ([D-016](decisions.md#d-016-audio-event-delivery-mechanism)–[D-018](decisions.md#d-018-ledfx-preset-identifier-form)).
+- Remaining open decisions are enumerated in [decisions.md](decisions.md) (none of
+  D-016–D-018 are still Open).
 - Logging exists and writes to the `logs/` directory that is already created.
 
 **Non-goals.** No refactor beyond hygiene. No show loop.
@@ -108,8 +109,8 @@ state moved out of module globals into an owned object with locking.
 - One implementation serves both output paths.
 - No mutable module-level state remains in `backend/runtime/`.
 
-**Non-goals.** No audio input yet — beats come from a scripted source. No transport.
-No crossfades, no bar/downbeat detection, no scene layering.
+**Non-goals.** No bar/downbeat detection, no scene layering, no crossfades. Live
+audio is in scope for WS-9 (adapter in this repo; detection in `lights-audio-engine`).
 
 **Risks.** Beat logic leaking into the output controllers, which is exactly how DMX
 and WLED sequencing drift apart
@@ -122,7 +123,8 @@ output present.
 **Status.** **Mostly done** — `CueSequencer`, `SceneController`, `DmxOutput`,
 `WledOutput`, and `BeatSource`/`ManualBeatSource` are implemented and tested.
 Operator server wires them via `ShowEngine` ([WS-11.1](current_sprint.md#111-app-entry-point-and-process-lifecycle)).
-Remaining: real beat detection (WS-9); symbolic sender only until WS-4.4.
+Remaining: capture health / WASAPI loopback UX (WS-9 remainder); prove E1.31 on the
+rig (WS-4.4).
 
 ---
 
@@ -310,7 +312,7 @@ failure behaviour that makes the system trustworthy mid-show. Page-level design:
 **Exit criteria.**
 - Home offers Performance and Builder ([frontend_architecture.md](frontend_architecture.md)).
 - A scene can be selected in one action (Performance grid).
-- Beat indicator flashes on server beat events (manual tap until WS-9).
+- Beat indicator flashes on server beat events (manual tap or live audio).
 - Builder pages cover device presets, looks, both cue lists, and scenes without
   duplicating graph rules in the client.
 - Audio state (BPM, level, and crucially *silent vs. device failed*) is visible.

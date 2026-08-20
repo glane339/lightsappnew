@@ -20,7 +20,7 @@ from storage.records import (
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 MigrationStep = Callable[[Path], None]
 
@@ -226,3 +226,26 @@ def migrate_cue_list_beats(root: Path) -> None:
     write_collection(DMX_PRESET_LISTS, dmx_lists, 4, root)
     write_collection(WLED_PRESET_LISTS, wled_lists, 4, root)
     write_collection(SCENES, scenes, 4, root)
+
+
+@migration(4)
+def migrate_drop_scene_sensitivity(root: Path) -> None:
+    """
+    Schema 4 → 5: scenes no longer carry a detector sensitivity.
+
+    Beat detection lives in the audio engine with its own config. The stored
+    per-scene value was unused at runtime, so it is dropped rather than kept as
+    dead data. ``AudioConfig.default_sensitivity`` goes with it — it only seeded
+    new scenes.
+    """
+    scenes = read_collection(SCENES, root)
+    for item in scenes.values():
+        item.pop("sensitivity", None)
+    write_collection(SCENES, scenes, 5, root)
+
+    payload = read_json(config_path(root), root)
+    if isinstance(payload, dict):
+        audio = payload.get("audio")
+        if isinstance(audio, dict) and "default_sensitivity" in audio:
+            audio.pop("default_sensitivity")
+            write_json(config_path(root), payload)

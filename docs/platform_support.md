@@ -123,7 +123,7 @@ The application stores nothing inside the repository. Layout, from
 
 ```text
 %LOCALAPPDATA%\LightsApp\          (Windows; platformdirs picks the equivalent elsewhere)
-├── config.json                    AppConfig — dmx / ledfx / ilda / audio / ui (schema v4)
+├── config.json                    AppConfig — dmx / ledfx / ilda / audio / ui (schema v5)
 ├── data/                          one JSON file per collection
 │   ├── scenes.json
 │   ├── presets.json
@@ -183,16 +183,19 @@ the user's `config.json`, which lives outside the working tree.
 
 ## Audio devices
 
-**No live audio capture exists**, but the beat-source boundary is implemented:
-[`audio/beat_source.py`](../backend/audio/beat_source.py) defines the protocol and a
-manual implementation for tests. `AudioConfig.input_device: Optional[str]`
-([`storage/config.py:30`](../backend/storage/config.py#L30)) is the placeholder for a
-future detector and is unread today.
+Live capture starts with the app. [`AudioConfig.input_device`](../backend/storage/config.py)
+is an optional PortAudio device name. When it is unset, startup uses the host default
+input. A blank selector, a missing library, or no default device leaves the show on
+manual tap (`POST /api/show/beat` / WebSocket `t: beat`).
 
-The decision that matters for this deployment, when the work starts: if the music
-plays on the same PC, capturing it requires **WASAPI loopback**, not a line-in
-device. That constrains the library choice, and the choice should be made with that
-requirement in mind rather than discovered afterwards. Tracked as open question 2 in
+The adapter is [`audio/audio_engine_source.py`](../backend/audio/audio_engine_source.py);
+detection is `lights-audio-engine` (pinned in `requirements.txt`). Tests stub the
+default-device probe so pytest never opens PortAudio.
+
+If the music plays on the same PC, capturing it requires **WASAPI loopback**, not the
+usual default microphone. Set `input_device` to that loopback device name. LEDfx may
+also capture on the same machine — two processes on one device is a Windows problem
+to watch in the room. See
 [audio_reactivity_architecture.md](audio_reactivity_architecture.md#10-open-questions).
 
 ---

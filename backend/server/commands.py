@@ -40,7 +40,6 @@ class ShowCommand:
 class ShowState:
     active_scene_id: Optional[str]
     is_active: bool
-    sensitivity: Optional[float]
 
 
 @dataclass(frozen=True)

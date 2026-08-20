@@ -112,7 +112,7 @@ def test_scene_list_reports_stored_scenes(data_root: Path) -> None:
         scenes = client.get("/api/scenes").json()["scenes"]
 
     assert [scene["id"] for scene in scenes] == [scene_id]
-    assert scenes[0]["sensitivity"] == 0.5
+    assert scenes[0]["preset_id"]
 
 
 def test_activating_over_rest_lights_the_rig(data_root: Path) -> None:

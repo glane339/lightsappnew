@@ -169,14 +169,6 @@ def test_a_failed_activation_leaves_the_previous_scene_running(library: Library)
     assert dmx.applied == [good.dmx_preset_ids[0]]
 
 
-def test_sensitivity_is_read_from_the_active_scene(rig) -> None:
-    graph, controller, _, _ = rig
-
-    assert controller.sensitivity is None
-    controller.activate(graph.scene_id)
-    assert controller.sensitivity == 0.5
-
-
 def test_beat_source_drives_the_controller_end_to_end(library: Library) -> None:
     graph = build_cycling_scene_graph(library, dmx_beats=2, wled_beats=3)
     buffer = Active_DMX_Channels()

@@ -25,7 +25,7 @@ def test_export_import_round_trip(data_root: Path, tmp_path: Path) -> None:
 
     restored = Library.open(restore_root, sync_ilda=False)
     assert scene.id in restored.scenes
-    assert restored.scenes[scene.id].sensitivity == 0.5
+    assert restored.scenes[scene.id].preset_id == scene.preset_id
 
 
 def test_zip_slip_rejected(data_root: Path, tmp_path: Path) -> None:

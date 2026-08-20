@@ -66,7 +66,6 @@ class ILDAConfig(BaseModel):
 
 class AudioConfig(BaseModel):
     input_device: Optional[str] = None
-    default_sensitivity: float = 0.5
 
 
 class UIConfig(BaseModel):

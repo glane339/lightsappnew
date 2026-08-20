@@ -13,4 +13,3 @@ class Scene(BaseModel):
     id: str = Field(default_factory=lambda: uuid4().hex)
     preset_id: str
     ilda_frame_list_id: Optional[str] = None
-    sensitivity: float = Field(ge=0.0, le=1.0)

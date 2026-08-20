@@ -45,13 +45,6 @@ class SceneController:
     def is_active(self) -> bool:
         return self._scene_id is not None
 
-    @property
-    def sensitivity(self) -> Optional[float]:
-        """The active scene's sensitivity, for the audio processor to pick up."""
-        if self._scene_id is None:
-            return None
-        return self._library.get(SCENES, self._scene_id).sensitivity
-
     def activate(self, scene_id: str) -> None:
         """
         Make a scene current and light it immediately.

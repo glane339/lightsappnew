@@ -467,7 +467,6 @@ class AuthoringService:
         self,
         preset_id: str,
         *,
-        sensitivity: Optional[float] = None,
         ilda_frame_list_id: Optional[str] = None,
         scene_id: Optional[str] = None,
     ) -> Scene:
@@ -476,22 +475,15 @@ class AuthoringService:
 
         Playability is checked here with the same rules ``SceneController.activate``
         applies, so a stored scene cannot fail activation for structural reasons.
-        ``sensitivity`` defaults from ``AudioConfig.default_sensitivity``.
         """
         with self._lock:
             self._require_playable_preset(preset_id)
             self._require_ilda_list(ilda_frame_list_id)
-            resolved = (
-                sensitivity
-                if sensitivity is not None
-                else self._library.config.audio.default_sensitivity
-            )
             scene = self._construct(
                 Scene,
                 id=scene_id,
                 preset_id=preset_id,
                 ilda_frame_list_id=ilda_frame_list_id,
-                sensitivity=resolved,
             )
             with self._commit() as library:
                 self._add(library, scene)
@@ -502,16 +494,13 @@ class AuthoringService:
         scene_id: str,
         *,
         preset_id: str,
-        sensitivity: float,
         ilda_frame_list_id: Optional[str] = None,
     ) -> Scene:
         """
         Full replacement of a scene's fields.
 
         Safe against a running show: the controller snapshots cue lists at
-        activation, and reads sensitivity live by id — so a sensitivity change takes
-        effect immediately without touching sequence state, and a preset change
-        applies on the next activation.
+        activation, so a preset change applies on the next activation.
         """
         with self._lock:
             scene = self._require(SCENES, scene_id)
@@ -522,12 +511,10 @@ class AuthoringService:
                 id=scene_id,
                 preset_id=preset_id,
                 ilda_frame_list_id=ilda_frame_list_id,
-                sensitivity=sensitivity,
             )
             with self._commit():
                 scene.preset_id = validated.preset_id
                 scene.ilda_frame_list_id = validated.ilda_frame_list_id
-                scene.sensitivity = validated.sensitivity
             return scene
 
     def _require_playable_preset(self, preset_id: str) -> None:

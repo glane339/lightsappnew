@@ -33,7 +33,6 @@ class AcceptedResponse(BaseModel):
 class StateResponse(BaseModel):
     active_scene_id: str | None
     is_active: bool
-    sensitivity: float | None
 
 
 def _enqueue(engine: ShowEngine, kind: CommandKind, scene_id: str | None = None) -> AcceptedResponse:
@@ -54,7 +53,6 @@ def get_state(engine: EngineDep) -> StateResponse:
     return StateResponse(
         active_scene_id=state.active_scene_id,
         is_active=state.is_active,
-        sensitivity=state.sensitivity,
     )
 
 
