@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncIterator, Optional
@@ -18,8 +19,10 @@ from fastapi import FastAPI, WebSocket
 from fastapi.staticfiles import StaticFiles
 
 from authoring.service import AuthoringService
+from audio.audio_engine_source import AudioEngineBeatSource
+from server.commands import CommandKind, ShowCommand
 from server.commands import ShowEvent
-from server.engine import ShowEngine
+from server.engine import ShowBusyError, ShowEngine
 from server.errors import register_exception_handlers
 from server.routes.authoring import router as authoring_router
 from server.routes.diag import router as diag_router
@@ -40,6 +43,36 @@ FRONTEND_DIR = Path(__file__).resolve().parents[2] / "frontend"
 EVENT_QUEUE_MAX = 256
 
 
+def _submit_detected_beat(engine: ShowEngine) -> None:
+    """Bridge one detected beat to the show thread without blocking audio capture."""
+
+    try:
+        engine.submit(ShowCommand(kind=CommandKind.BEAT, received_ns=time.perf_counter_ns()))
+    except ShowBusyError:
+        logger.warning("dropped detected beat because the show command queue is full")
+
+
+def _build_audio_source(input_device: str) -> AudioEngineBeatSource | None:
+    """Create the optional live source without importing hardware support at app startup."""
+
+    try:
+        from lights_audio_engine import AudioEngine
+        from lights_audio_engine.capture import SoundDeviceAudioSource, run_engine
+    except ImportError:
+        logger.exception("live audio is configured but lights-audio-engine is unavailable")
+        return None
+    try:
+        source = SoundDeviceAudioSource(input_device)
+    except ValueError as exc:
+        logger.error("live detected audio disabled: invalid input device selector: %s", exc)
+        return None
+    return AudioEngineBeatSource(
+        source,
+        AudioEngine(),
+        runner=run_engine,
+    )
+
+
 def create_app(
     config: Optional[AppConfig] = None,
     *,
@@ -51,6 +84,13 @@ def create_app(
     library = Library.open(resolved_root, sync_ilda=False)
     authoring = AuthoringService(library)
     engine = ShowEngine(library, app_config, authoring=authoring)
+    audio_source = (
+        _build_audio_source(app_config.audio.input_device)
+        if app_config.audio.input_device is not None
+        else None
+    )
+    if audio_source is not None:
+        audio_source.subscribe(lambda: _submit_detected_beat(engine))
     events: "asyncio.Queue[ShowEvent]" = asyncio.Queue(maxsize=EVENT_QUEUE_MAX)
 
     @asynccontextmanager
@@ -59,10 +99,14 @@ def create_app(
         # events into it from three other threads.
         engine.bind_loop(asyncio.get_running_loop(), events)
         engine.start()
+        if audio_source is not None:
+            audio_source.start()
         logger.info("show engine started")
         try:
             yield
         finally:
+            if audio_source is not None:
+                audio_source.stop()
             engine.stop()
             logger.info("show engine stopped")
 
@@ -75,6 +119,7 @@ def create_app(
     app.state.library = library
     app.state.authoring = authoring
     app.state.engine = engine
+    app.state.audio_source = audio_source
     app.state.show_events = events
     app.state.request_shutdown = None
 
