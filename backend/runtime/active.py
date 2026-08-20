@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import threading
-from typing import Dict, List
+from typing import Dict, List, Optional, Sequence
 
+from dmx_slots import clamp_dmx_slots
 from models.Active_DMX_Channels import UNIVERSE_SIZE, Active_DMX_Channels
 from storage.json_store import StorageError
 from storage.records import (
@@ -18,29 +19,52 @@ from storage.records import (
 # recorded now, but anything other than this is rejected rather than silently dropped.
 SUPPORTED_UNIVERSE = 1
 
-# The instance a sender reads. Rebuilt in place so a sender holding a reference always
-# sees the latest values. ILDA has no equivalent: the laser path is parked, so nothing
-# here resolves frames — see docs/laser_and_haze_safety.md.
-active_dmx_channels = Active_DMX_Channels()
 
-# The send-on-change seam. A sender waiting on this leaves within microseconds of a look
-# changing, instead of waiting out a fixed tick — see docs/server_plan/.
-dmx_dirty = threading.Event()
+class UniverseState:
+    """
+    One process-owned universe: the buffer a sender reads, the dirty flag that wakes it,
+    and a publish counter so the show thread can tell whether a command produced a frame.
 
-# Counts frames handed to the sender. Callers use it to tell whether an operation
-# actually changed the universe, since a beat that lands mid-cue changes nothing.
-_publish_count = 0
+    Each ``ShowEngine`` holds its own instance. Nothing here is a module global, so two
+    engines in one process cannot share a universe by accident (F-03 / AF-M03 / WS-3.4).
+    Writes take a lock; the sender snapshots under the same lock so it never reads a
+    half-replaced list.
+    """
 
+    def __init__(self, channels: Optional[Active_DMX_Channels] = None) -> None:
+        self._channels = channels if channels is not None else Active_DMX_Channels()
+        self.dirty = threading.Event()
+        self._lock = threading.Lock()
+        self._publish_count = 0
 
-def publish() -> None:
-    """Announce that ``active_dmx_channels`` holds a new frame."""
-    global _publish_count
-    _publish_count += 1
-    dmx_dirty.set()
+    @property
+    def channels(self) -> Active_DMX_Channels:
+        return self._channels
 
+    def publish(self) -> None:
+        """Announce that the buffer holds a new frame."""
+        with self._lock:
+            self._publish_count += 1
+        self.dirty.set()
 
-def publish_count() -> int:
-    return _publish_count
+    def publish_count(self) -> int:
+        with self._lock:
+            return self._publish_count
+
+    def snapshot(self) -> List[int]:
+        with self._lock:
+            return list(self._channels.channels)
+
+    def replace(self, values: Sequence[int]) -> None:
+        """Swap in a full universe (clamped, padded) and wake the sender."""
+        clamped = clamp_dmx_slots(values)
+        if len(clamped) < UNIVERSE_SIZE:
+            clamped = clamped + [0] * (UNIVERSE_SIZE - len(clamped))
+        elif len(clamped) > UNIVERSE_SIZE:
+            clamped = clamped[:UNIVERSE_SIZE]
+        with self._lock:
+            self._channels.channels = clamped
+        self.publish()
 
 
 def build_channels(library, dmx_preset_id: str) -> List[int]:
@@ -49,7 +73,8 @@ def build_channels(library, dmx_preset_id: str) -> List[int]:
 
     A device's slot comes from its DMX_Device record rather than from the order of
     the look, so address gaps are expressible and two devices claiming the same
-    channel is an error instead of a silent overwrite.
+    channel is an error instead of a silent overwrite. Values are clamped 0–255
+    so a bypass of the model still cannot put an illegal slot on the wire.
     """
     preset = library.get(DMX_PRESETS, dmx_preset_id)
 
@@ -81,7 +106,7 @@ def build_channels(library, dmx_preset_id: str) -> List[int]:
                 )
             claimed_by[offset] = device.id
 
-        values = list(device_preset.channel_values)[: device.channel_count]
+        values = clamp_dmx_slots(list(device_preset.channel_values)[: device.channel_count])
         values += [0] * (device.channel_count - len(values))
         channels[start : start + device.channel_count] = values
 
@@ -96,10 +121,3 @@ def active_dmx_preset_id(library, scene_id: str, index: int = 0) -> str:
     if not preset_list.dmx_preset_ids:
         raise StorageError(f"dmx_preset_lists '{preset_list.id}' holds no presets")
     return preset_list.dmx_preset_ids[index]
-
-
-def update_active_dmx_channels(library, scene_id: str, index: int = 0) -> Active_DMX_Channels:
-    active_dmx_channels.channels = build_channels(
-        library, active_dmx_preset_id(library, scene_id, index)
-    )
-    return active_dmx_channels

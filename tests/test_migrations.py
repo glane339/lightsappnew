@@ -234,3 +234,26 @@ def test_migrate_v4_drops_scene_sensitivity(data_root: Path) -> None:
     assert scenes["high"]["preset_id"] == "p"
     config = read_json(config_path(data_root), data_root)
     assert "default_sensitivity" not in (config or {}).get("audio", {})
+
+
+def test_migrate_v5_clamps_channel_values(data_root: Path) -> None:
+    from storage.json_store import read_collection
+
+    ensure_layout(data_root)
+    write_json(config_path(data_root), {"schema_version": 5})
+    write_collection(
+        DMX_DEVICE_PRESETS,
+        {
+            "wide": {"id": "wide", "device_id": "dev", "channel_values": [-4, 12, 300]},
+            "ok": {"id": "ok", "device_id": "dev", "channel_values": [0, 255]},
+        },
+        5,
+        data_root,
+    )
+
+    assert migrate(data_root) == SCHEMA_VERSION
+
+    presets = read_collection(DMX_DEVICE_PRESETS, data_root)
+    assert presets["wide"]["channel_values"] == [0, 12, 255]
+    assert presets["ok"]["channel_values"] == [0, 255]
+

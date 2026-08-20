@@ -69,6 +69,21 @@ def test_create_scene_stores_the_preset(library: Library) -> None:
     assert library.get(SCENES, "red-wash").id == "red-wash"
 
 
+def test_create_scene_from_cue_lists_reuses_existing_preset(library: Library) -> None:
+    authoring = AuthoringService(library)
+    preset = _playable_preset(authoring, library)
+
+    scene = authoring.create_scene_from_cue_lists(
+        preset.dmx_preset_list_id,
+        preset.wled_preset_list_id,
+        scene_id="from-lists",
+    )
+
+    assert scene.preset_id == preset.id
+    assert library.get(SCENES, "from-lists").preset_id == preset.id
+
+
+
 def test_create_scene_rejects_missing_preset(library: Library) -> None:
     authoring = AuthoringService(library)
     with pytest.raises(AuthoringInvalid, match="does not exist"):

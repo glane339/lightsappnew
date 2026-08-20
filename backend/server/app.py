@@ -26,6 +26,7 @@ from server.engine import ShowBusyError, ShowEngine
 from server.errors import register_exception_handlers
 from server.routes.authoring import router as authoring_router
 from server.routes.diag import router as diag_router
+from server.routes.ledfx import router as ledfx_router
 from server.routes.scenes import router as scenes_router
 from server.routes.show import router as show_router
 from server.routes.status import router as status_router
@@ -164,6 +165,7 @@ def create_app(
     app.include_router(authoring_router)
     app.include_router(status_router)
     app.include_router(diag_router)
+    app.include_router(ledfx_router)
 
     @app.websocket("/ws/show")
     async def show_socket(websocket: WebSocket) -> None:

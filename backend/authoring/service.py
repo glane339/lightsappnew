@@ -489,6 +489,82 @@ class AuthoringService:
                 self._add(library, scene)
             return scene
 
+    def create_scene_from_cue_lists(
+        self,
+        dmx_preset_list_id: str,
+        wled_preset_list_id: str,
+        *,
+        scene_id: Optional[str] = None,
+        ilda_frame_list_id: Optional[str] = None,
+    ) -> Scene:
+        """
+        Create a scene from two cue lists, hiding the lighting ``Preset``.
+
+        Reuses an existing preset with the same pair when one exists, so Builder
+        does not accumulate duplicate presets for the same pairing.
+        """
+        with self._lock:
+            self._require_playable_dmx_list(dmx_preset_list_id)
+            self._require_playable_wled_list(wled_preset_list_id)
+            self._require_ilda_list(ilda_frame_list_id)
+            preset = self._find_preset_for_lists(dmx_preset_list_id, wled_preset_list_id)
+            with self._commit() as library:
+                if preset is None:
+                    preset = self._construct(
+                        Preset,
+                        id=None,
+                        dmx_preset_list_id=dmx_preset_list_id,
+                        wled_preset_list_id=wled_preset_list_id,
+                    )
+                    self._add(library, preset)
+                scene = self._construct(
+                    Scene,
+                    id=scene_id,
+                    preset_id=preset.id,
+                    ilda_frame_list_id=ilda_frame_list_id,
+                )
+                self._add(library, scene)
+            return scene
+
+    def update_scene_from_cue_lists(
+        self,
+        scene_id: str,
+        *,
+        dmx_preset_list_id: str,
+        wled_preset_list_id: str,
+        ilda_frame_list_id: Optional[str] = None,
+    ) -> Scene:
+        """Replace a scene's cue-list pairing, reusing or creating the hidden preset."""
+        with self._lock:
+            scene = self._require(SCENES, scene_id)
+            self._require_playable_dmx_list(dmx_preset_list_id)
+            self._require_playable_wled_list(wled_preset_list_id)
+            self._require_ilda_list(ilda_frame_list_id)
+            preset = self._find_preset_for_lists(dmx_preset_list_id, wled_preset_list_id)
+            with self._commit() as library:
+                if preset is None:
+                    preset = self._construct(
+                        Preset,
+                        id=None,
+                        dmx_preset_list_id=dmx_preset_list_id,
+                        wled_preset_list_id=wled_preset_list_id,
+                    )
+                    self._add(library, preset)
+                scene.preset_id = preset.id
+                scene.ilda_frame_list_id = ilda_frame_list_id
+            return scene
+
+    def _find_preset_for_lists(
+        self, dmx_preset_list_id: str, wled_preset_list_id: str
+    ) -> Optional[Preset]:
+        for preset in self._library.all(PRESETS):
+            if (
+                preset.dmx_preset_list_id == dmx_preset_list_id
+                and preset.wled_preset_list_id == wled_preset_list_id
+            ):
+                return preset
+        return None
+
     def update_scene(
         self,
         scene_id: str,

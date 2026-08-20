@@ -22,6 +22,7 @@ class SenderHealth(BaseModel):
     frames_sent: Optional[int]
     destination: Optional[str] = None
     send_failures: Optional[int] = None
+    reachable: bool = True
 
 
 class LedfxHealth(BaseModel):
@@ -29,11 +30,20 @@ class LedfxHealth(BaseModel):
     reachable: bool
 
 
+class AudioHealth(BaseModel):
+    capture: str
+    bpm: Optional[float] = None
+    level: Optional[float] = None
+    running: bool = False
+
+
 class StatusResponse(BaseModel):
     active_scene_id: Optional[str]
     is_active: bool
     sender: SenderHealth
     ledfx: LedfxHealth
+    audio: AudioHealth
+    last_error: Optional[str] = None
     latency: Dict[str, int]
 
 
@@ -64,8 +74,24 @@ def shutdown(request: Request, background: BackgroundTasks) -> ShutdownResponse:
     return ShutdownResponse(status="stopping")
 
 
+def _audio_health(request: Request) -> AudioHealth:
+    source = getattr(request.app.state, "audio_source", None)
+    if source is None:
+        return AudioHealth(capture="off", running=False)
+    health_fn = getattr(source, "health", None)
+    if callable(health_fn):
+        payload = health_fn()
+        return AudioHealth(
+            capture=str(payload.get("capture", "off")),
+            bpm=payload.get("bpm"),
+            level=payload.get("level"),
+            running=bool(payload.get("running", False)),
+        )
+    return AudioHealth(capture="off", running=False)
+
+
 @router.get("/status")
-def get_status(engine: EngineDep) -> StatusResponse:
+def get_status(request: Request, engine: EngineDep) -> StatusResponse:
     state = engine.state()
     return StatusResponse(
         active_scene_id=state.active_scene_id,
@@ -75,5 +101,7 @@ def get_status(engine: EngineDep) -> StatusResponse:
             enabled=engine.ledfx_enabled,
             reachable=engine.ledfx_client.reachable,
         ),
+        audio=_audio_health(request),
+        last_error=engine.last_error,
         latency=engine.latency.summary(),
     )

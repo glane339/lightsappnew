@@ -127,6 +127,15 @@ def test_build_channels_pads_short_and_truncates_long_values(library: Library) -
     assert build_channels(library, wide_look.id)[0:5] == [1, 2, 3, 4, 0]
 
 
+def test_device_preset_model_rejects_out_of_range_slots() -> None:
+    with pytest.raises(ValidationError, match="0-255"):
+        DMX_Device_Preset(device_id="dev", channel_values=[0, 256])
+
+    with pytest.raises(ValidationError, match="0-255"):
+        DMX_Device_Preset(device_id="dev", channel_values=[-1, 0, 1])
+
+
+
 def test_build_channels_rejects_overlapping_devices(library: Library) -> None:
     first = DMX_Device(name="Par 1", start_address=1, channel_count=4)
     second = DMX_Device(name="Par 2", start_address=3, channel_count=4)

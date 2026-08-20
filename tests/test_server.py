@@ -80,6 +80,16 @@ def test_health_is_ok(client: TestClient) -> None:
     assert response.json() == {"status": "ok"}
 
 
+def test_status_reports_audio_and_reachability(client: TestClient) -> None:
+    status = client.get("/api/status").json()
+
+    assert status["audio"]["capture"] == "off"
+    assert status["audio"]["running"] is False
+    assert status["sender"]["reachable"] is True
+    assert status["ledfx"]["enabled"] is False
+    assert status["last_error"] is None
+
+
 def test_shutdown_is_a_noop_without_a_callback(client: TestClient) -> None:
     response = client.post("/api/shutdown")
 

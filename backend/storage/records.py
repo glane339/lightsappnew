@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from typing import Dict, List, Optional, Tuple, Type
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
+
+from dmx_slots import require_dmx_slots
 
 SCENES = "scenes"
 PRESETS = "presets"
@@ -54,6 +56,11 @@ class DMXDevicePresetRecord(BaseModel):
     device_id: str
     channel_values: List[int] = []
 
+    @field_validator("channel_values")
+    @classmethod
+    def _dmx_range(cls, values: List[int]) -> List[int]:
+        return require_dmx_slots(values)
+
 
 class WLEDPresetListRecord(BaseModel):
     id: str
@@ -104,9 +111,11 @@ COLLECTION_ORDER: Tuple[str, ...] = (
 )
 
 # Anchors for orphan pruning. Scenes because nothing points at them, ILDA frames
-# because their .ild files are dropped into the folder and own their own lifetime, and
-# DMX devices because the rig's patch exists whether or not a look uses it yet.
-ROOT_COLLECTIONS: Tuple[str, ...] = (SCENES, ILDA_FRAMES, DMX_DEVICES)
+# because their .ild files are dropped into the folder and own their own lifetime, DMX
+# devices because the rig's patch exists whether or not a look uses it yet, and WLED
+# presets because LEDfx scene sync registers names before any cue list references them
+# (AF2-M02).
+ROOT_COLLECTIONS: Tuple[str, ...] = (SCENES, ILDA_FRAMES, DMX_DEVICES, WLED_PRESETS)
 
 # parent collection -> (id attribute, child collection, attribute holds a list of ids)
 # The attribute name is the same on the model and on the record. A single-id attribute

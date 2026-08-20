@@ -9,7 +9,76 @@
   var grid = document.getElementById("scenes");
   var beatBar = document.getElementById("beat-bar");
   var activeSceneId = null;
+  var showError = document.getElementById("show-error");
+  var healthAudio = document.getElementById("health-audio");
+  var healthDmx = document.getElementById("health-dmx");
+  var healthLedfx = document.getElementById("health-ledfx");
   var flashTimer = null;
+
+  function setChip(el, text, cls) {
+    if (!el) {
+      return;
+    }
+    el.textContent = text;
+    el.className = cls || "";
+  }
+
+  function paintHealth(status) {
+    var audio = status.audio || {};
+    var capture = audio.capture || "off";
+    var bpm = audio.bpm;
+    if (capture === "live") {
+      var live = "audio live";
+      if (typeof bpm === "number") {
+        live += " " + Math.round(bpm) + " BPM";
+      }
+      if (typeof audio.level === "number") {
+        live += " L" + audio.level.toFixed(2);
+      }
+      setChip(healthAudio, live, "ok");
+    } else if (capture === "silent") {
+      setChip(healthAudio, "audio silent", "warn");
+    } else if (capture === "dead") {
+      setChip(healthAudio, "audio dead", "bad");
+    } else {
+      setChip(healthAudio, "audio off", "");
+    }
+
+    var sender = status.sender || {};
+    if (!sender.running) {
+      setChip(healthDmx, "dmx sender down", "bad");
+    } else if (sender.reachable === false) {
+      setChip(healthDmx, "dmx unreachable", "bad");
+    } else {
+      setChip(healthDmx, "dmx " + (sender.transport || "ok"), "ok");
+    }
+
+    var ledfx = status.ledfx || {};
+    if (!ledfx.enabled) {
+      setChip(healthLedfx, "ledfx off", "");
+    } else if (ledfx.reachable) {
+      setChip(healthLedfx, "ledfx ok", "ok");
+    } else {
+      setChip(healthLedfx, "ledfx down", "bad");
+    }
+
+    if (status.last_error) {
+      chrome.banner(showError, "error", status.last_error);
+    } else if (showError && showError.classList.contains("error")) {
+      chrome.banner(showError, "", "");
+    }
+  }
+
+  function pollStatus() {
+    api.status()
+      .then(paintHealth)
+      .catch(function (err) {
+        setChip(healthAudio, "audio ?", "bad");
+        setChip(healthDmx, "dmx ?", "bad");
+        setChip(healthLedfx, "ledfx ?", "bad");
+        chrome.banner(showError, "error", err.message || "status failed");
+      });
+  }
 
   function flashBeat() {
     beatBar.classList.remove("flash");
@@ -85,6 +154,7 @@
     },
     error: function (msg) {
       chrome.setConnection(msg.message || "error", "dead");
+      chrome.banner(showError, "error", msg.message || "error");
     },
   });
 
@@ -125,4 +195,6 @@
   });
 
   loadScenes();
+  pollStatus();
+  setInterval(pollStatus, 1000);
 })();

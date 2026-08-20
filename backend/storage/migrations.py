@@ -20,7 +20,7 @@ from storage.records import (
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 MigrationStep = Callable[[Path], None]
 
@@ -249,3 +249,24 @@ def migrate_drop_scene_sensitivity(root: Path) -> None:
         if isinstance(audio, dict) and "default_sensitivity" in audio:
             audio.pop("default_sensitivity")
             write_json(config_path(root), payload)
+
+
+@migration(5)
+def migrate_clamp_channel_values(root: Path) -> None:
+    """
+    Schema 5 → 6: clamp stored ``channel_values`` to 0–255.
+
+    The model and record now reject out-of-range slots. Anything already on disk
+    is brought into range so load cannot fail a previously-valid library.
+    Non-integers become 0.
+    """
+    from dmx_slots import clamp_dmx_slot
+
+    presets = read_collection(DMX_DEVICE_PRESETS, root)
+    for item in presets.values():
+        raw = item.get("channel_values")
+        if not isinstance(raw, list):
+            item["channel_values"] = []
+            continue
+        item["channel_values"] = [clamp_dmx_slot(value) for value in raw]
+    write_collection(DMX_DEVICE_PRESETS, presets, 6, root)

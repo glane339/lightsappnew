@@ -14,8 +14,8 @@ import socket
 import threading
 from typing import Callable, List, Optional, Protocol, Sequence, Tuple
 
-from models.Active_DMX_Channels import UNIVERSE_SIZE, Active_DMX_Channels
-from runtime.active import dmx_dirty
+from models.Active_DMX_Channels import UNIVERSE_SIZE
+from runtime.active import UniverseState
 from runtime.e131 import (
     DEFAULT_SOURCE_NAME,
     OPTION_STREAM_TERMINATED,
@@ -256,14 +256,14 @@ class SenderThread:
     """
     Send-on-change with a keepalive floor.
 
-    ``dmx_dirty.wait`` returns the moment a look changes. The timeout re-sends an
+    ``universe.dirty.wait`` returns the moment a look changes. The timeout re-sends an
     unchanged universe so a receiver that missed a packet recovers, and so a box that
     blacks out when packets stop keeps holding the current look.
     """
 
     def __init__(
         self,
-        channels: Active_DMX_Channels,
+        universe: UniverseState,
         transport: DmxTransport,
         *,
         keepalive_s: float,
@@ -272,7 +272,7 @@ class SenderThread:
     ) -> None:
         if keepalive_s <= 0:
             raise ValueError("keepalive_s must be positive")
-        self._channels = channels
+        self._universe = universe
         self._transport = transport
         self._keepalive_s = keepalive_s
         self._stop = stop
@@ -292,7 +292,7 @@ class SenderThread:
 
     def stop(self, timeout_s: float = 5.0) -> None:
         self._stop.set()
-        dmx_dirty.set()  # break the wait rather than letting it run out the keepalive
+        self._universe.dirty.set()  # break the wait rather than letting it run out the keepalive
         thread = self._thread
         if thread is not None:
             thread.join(timeout=timeout_s)
@@ -300,19 +300,20 @@ class SenderThread:
 
     def _run(self) -> None:
         while not self._stop.is_set():
-            changed = dmx_dirty.wait(timeout=self._keepalive_s)
+            changed = self._universe.dirty.wait(timeout=self._keepalive_s)
             if self._stop.is_set():
                 break
 
-            # Cleared before the buffer is read, so a look that lands during the send
-            # leaves the flag set and is picked up on the next pass instead of being
-            # swallowed.
-            dmx_dirty.clear()
+            # Only clear after a *change* wake. Clearing after a timeout (F-07) can
+            # swallow a publish that landed between the timeout return and the clear:
+            # the frame still goes out, but the ledger waits for the next change.
+            if changed:
+                self._universe.dirty.clear()
 
             # A transport is contracted not to raise, but this thread dying would freeze
             # the rig with no error anywhere, so the contract is not trusted.
             try:
-                self._transport.send(self._channels.channels)
+                self._transport.send(self._universe.snapshot())
             except Exception:
                 self.send_errors += 1
                 logger.exception("sender survived a transport failure")

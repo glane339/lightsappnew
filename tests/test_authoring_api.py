@@ -340,3 +340,55 @@ def test_http_device_preset_rejects_wrong_channel_count(data_root: Path) -> None
         body = _error(response)
         assert body["code"] == "invalid"
         assert "exactly 3" in body["message"]
+
+
+def test_http_create_scene_from_cue_lists(data_root: Path) -> None:
+    device_id = _seed_device(data_root)
+    with _client(data_root) as client:
+        device_preset = client.post(
+            "/api/dmx-device-presets",
+            json={"device_id": device_id, "channel_values": [10, 20, 30]},
+        )
+        look = client.post(
+            "/api/dmx-presets",
+            json={"dmx_device_preset_ids": [device_preset.json()["id"]]},
+        )
+        dmx_list = client.post(
+            "/api/dmx-preset-lists",
+            json={"dmx_preset_ids": [look.json()["id"]], "beats": 1},
+        )
+        client.post("/api/wled-presets", json={"name": "Living Room"})
+        wled_list = client.post(
+            "/api/wled-preset-lists",
+            json={"wled_preset_ids": ["Living Room"], "beats": 1},
+        )
+
+        scene = client.post(
+            "/api/scenes",
+            json={
+                "id": "paired",
+                "dmx_preset_list_id": dmx_list.json()["id"],
+                "wled_preset_list_id": wled_list.json()["id"],
+            },
+        )
+        assert scene.status_code == 201, scene.text
+        assert scene.json()["id"] == "paired"
+        assert scene.json()["preset_id"]
+
+        again = client.post(
+            "/api/scenes",
+            json={
+                "id": "paired-2",
+                "dmx_preset_list_id": dmx_list.json()["id"],
+                "wled_preset_list_id": wled_list.json()["id"],
+            },
+        )
+        assert again.status_code == 201, again.text
+        assert again.json()["preset_id"] == scene.json()["preset_id"]
+
+
+def test_ledfx_refresh_conflicts_when_disabled(data_root: Path) -> None:
+    with _client(data_root) as client:
+        response = client.post("/api/ledfx/refresh")
+        assert response.status_code == 409
+

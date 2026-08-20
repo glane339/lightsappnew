@@ -14,7 +14,7 @@ from typing import Protocol
 
 from ledfx.client import LedFxClientProtocol, LedFxError
 from models.Active_DMX_Channels import Active_DMX_Channels
-from runtime.active import active_dmx_channels, build_channels, publish
+from runtime.active import UniverseState, build_channels
 
 logger = logging.getLogger(__name__)
 
@@ -26,23 +26,34 @@ class CueOutput(Protocol):
 class DmxOutput:
     """Resolves a look into the universe buffer a sender reads."""
 
-    def __init__(self, library, channels: Active_DMX_Channels = active_dmx_channels) -> None:
+    def __init__(
+        self,
+        library,
+        universe: UniverseState | Active_DMX_Channels | None = None,
+    ) -> None:
         self._library = library
-        self._channels = channels
+        if isinstance(universe, UniverseState):
+            self._universe = universe
+        elif isinstance(universe, Active_DMX_Channels):
+            self._universe = UniverseState(channels=universe)
+        else:
+            self._universe = UniverseState()
+
+    @property
+    def universe(self) -> UniverseState:
+        return self._universe
 
     @property
     def channels(self) -> Active_DMX_Channels:
-        return self._channels
+        return self._universe.channels
 
     def apply(self, preset_id: str) -> None:
-        # Built fully to the side, then assigned, so a sender never reads a buffer that
-        # is half old look and half new.
-        self._channels.channels = build_channels(self._library, preset_id)
-        publish()
+        # Built fully to the side, then assigned under the universe lock, so a sender
+        # never reads a buffer that is half old look and half new.
+        self._universe.replace(build_channels(self._library, preset_id))
 
     def blackout(self) -> None:
-        self._channels.channels = [0] * len(self._channels.channels)
-        publish()
+        self._universe.replace([0] * len(self._universe.channels.channels))
 
 
 class AsyncCueOutput:
@@ -87,3 +98,5 @@ class WledOutput:
             self._client.activate_scene(preset_id)
         except LedFxError as exc:
             logger.warning("LEDfx did not accept scene %r: %s", preset_id, exc)
+        except Exception:
+            logger.exception("LEDfx activation failed for scene %r", preset_id)

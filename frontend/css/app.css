@@ -123,6 +123,23 @@ label.field {
 .conn { font-size: 13px; color: var(--muted); }
 .conn.live { color: var(--good); }
 .conn.dead { color: var(--bad); }
+.health-strip {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 6px 16px;
+  font-size: 13px;
+  color: var(--muted);
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+.health-strip .ok { color: var(--good); }
+.health-strip .warn { color: var(--warn); }
+.health-strip .bad { color: var(--bad); }
+.mode-performance #show-error {
+  margin: 0;
+  border-radius: 0;
+}
 .topbar #stop-server {
   padding: 6px 10px;
   font-size: 13px;

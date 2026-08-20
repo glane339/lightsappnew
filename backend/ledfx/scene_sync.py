@@ -63,8 +63,9 @@ class LedFxSceneSync:
         """
         Fetch scenes from LEDfx and register any names not already in the library.
 
-        Returns the number of presets added. On LEDfx failure, leaves storage
-        untouched and returns 0.
+        Returns the number of presets added. On any LEDfx or storage failure, leaves
+        storage as-is (best effort) and returns 0 so the poll loop keeps running
+        (AF2-M01).
         """
         with self._lock:
             try:
@@ -72,8 +73,15 @@ class LedFxSceneSync:
             except LedFxError as exc:
                 logger.warning("LEDfx scene refresh skipped: %s", exc)
                 return 0
+            except Exception:
+                logger.exception("LEDfx scene list failed unexpectedly")
+                return 0
 
-            added = self._upsert([scene.name for scene in scenes])
+            try:
+                added = self._upsert([scene.name for scene in scenes])
+            except Exception:
+                logger.exception("LEDfx scene upsert failed")
+                return 0
             if added:
                 logger.info("Added %d LEDfx scene(s) to wled_presets", added)
             return added
@@ -81,5 +89,8 @@ class LedFxSceneSync:
     def _run(self) -> None:
         # Immediate refresh, then wait interval between subsequent polls.
         while not self._stop.is_set():
-            self.refresh_once()
+            try:
+                self.refresh_once()
+            except Exception:
+                logger.exception("LEDfx scene sync survived an unexpected failure")
             self._stop.wait(self._interval_s)

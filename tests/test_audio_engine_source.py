@@ -62,6 +62,7 @@ def test_adapter_tracks_bpm_count_and_event_order() -> None:
     assert adapter.bpm == 124.0
     assert received == [1, 2, 3]
     assert source.closed is True
+    assert adapter.health()["capture"] == "off"
 
 
 def test_adapter_catches_worker_failures_and_stop_is_idempotent() -> None:
@@ -75,7 +76,27 @@ def test_adapter_catches_worker_failures_and_stop_is_idempotent() -> None:
 
     adapter.start()
     assert _wait_for(lambda: not adapter.running)
+    assert adapter.health()["capture"] == "dead"
     adapter.stop()
     adapter.stop()
 
     assert source.closed is True
+    assert adapter.health()["capture"] == "dead"
+
+
+def test_adapter_reports_silent_when_frames_have_no_beats() -> None:
+    source = FakeSource()
+    hold = threading.Event()
+
+    def runner(_source: object, _engine: object) -> Iterator[FakeResult]:
+        yield FakeResult(None, ())
+        hold.wait()
+
+    adapter = AudioEngineBeatSource(source, object(), runner=runner)
+    adapter.start()
+    try:
+        assert _wait_for(lambda: adapter.health()["capture"] == "silent")
+        assert adapter.health()["running"] is True
+    finally:
+        hold.set()
+        adapter.stop()

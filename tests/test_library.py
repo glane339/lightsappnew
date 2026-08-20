@@ -175,3 +175,14 @@ def test_a_required_reference_still_cascades(library: Library) -> None:
     # Scene.preset_id is required, so the scene cannot survive losing it.
     assert (SCENES, scene.id) in deleted
     assert scene.id not in library.scenes
+
+
+def test_prune_orphans_keeps_unreferenced_wled_presets(library: Library) -> None:
+    build_minimal_scene_graph(library)
+    extra = WLED_Preset(id="unsynced-scene")
+    library.add(extra)
+
+    removed = library.prune_orphans()
+
+    assert extra.id not in (removed.get(WLED_PRESETS) or ())
+    assert extra.id in library.wled_presets

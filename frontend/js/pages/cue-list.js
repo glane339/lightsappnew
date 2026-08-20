@@ -95,6 +95,22 @@
         register();
       }
     });
+    var refreshBtn = document.getElementById("refresh-ledfx");
+    if (refreshBtn) {
+      refreshBtn.addEventListener("click", function () {
+        refreshLedfx();
+      });
+    }
+  }
+
+  async function refreshLedfx() {
+    try {
+      var result = await api.wledPresets.refreshLedfx();
+      await loadPalette();
+      banner("ok", "LEDfx +" + (result.added || 0));
+    } catch (err) {
+      banner("error", err.message);
+    }
   }
 
   async function register() {

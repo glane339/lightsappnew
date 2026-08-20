@@ -117,6 +117,9 @@
       register: function (name) {
         return request("POST", "/api/wled-presets", { name: name });
       },
+      refreshLedfx: function () {
+        return request("POST", "/api/ledfx/refresh");
+      },
       remove: function (id, force) {
         return request(
           "DELETE",

@@ -21,7 +21,7 @@ from typing import Any, Dict, Optional, Tuple
 from authoring.service import AuthoringService
 from ledfx.client import LedFxClientProtocol
 from ledfx.service import build_ledfx_stack
-from runtime.active import publish_count
+from runtime.active import UniverseState
 from runtime.outputs import AsyncCueOutput, DmxOutput, WledOutput
 from runtime.scene_controller import SceneController
 from runtime.sender import DmxTransport, SenderThread, build_transport
@@ -92,7 +92,8 @@ class ShowEngine:
             config.ledfx, self._authoring.upsert_wled_presets
         )
 
-        self._dmx_output = DmxOutput(library)
+        self._universe = UniverseState()
+        self._dmx_output = DmxOutput(library, self._universe)
         self._wled_worker = WledOutput(self._ledfx_client)
         self._controller = SceneController(
             library,
@@ -101,7 +102,7 @@ class ShowEngine:
         )
 
         self._sender = SenderThread(
-            self._dmx_output.channels,
+            self._universe,
             self._transport,
             keepalive_s=1.0 / config.dmx.refresh_hz,
             stop=self._stop,
@@ -118,6 +119,7 @@ class ShowEngine:
         self._wled_thread: Optional[threading.Thread] = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._events: Optional["asyncio.Queue[ShowEvent]"] = None
+        self._last_error: Optional[str] = None
 
     @property
     def latency(self) -> LatencyTracker:
@@ -134,6 +136,16 @@ class ShowEngine:
     @property
     def ledfx_enabled(self) -> bool:
         return self._config.ledfx.enabled
+
+    def refresh_ledfx_scenes(self) -> int:
+        """One-shot LEDfx scene sync. Raises if LEDfx is not enabled."""
+        if self._ledfx_sync is None:
+            raise RuntimeError("LEDfx scene sync is disabled")
+        return self._ledfx_sync.refresh_once()
+
+    @property
+    def last_error(self) -> Optional[str]:
+        return self._last_error
 
     @property
     def running(self) -> bool:
@@ -199,7 +211,7 @@ class ShowEngine:
         """
         try:
             self._dmx_output.blackout()
-            self._transport.send(self._dmx_output.channels.channels)
+            self._transport.send(self._universe.snapshot())
         except Exception:  # pragma: no cover - shutdown must not raise
             logger.exception("could not blackout before closing the transport")
 
@@ -223,12 +235,22 @@ class ShowEngine:
 
     def sender_health(self) -> Dict[str, Any]:
         destination = getattr(self._transport, "destination", None)
+        consecutive = getattr(self._transport, "consecutive_failures", 0) or 0
+        running = self._sender.running
+        name = getattr(self._transport, "name", type(self._transport).__name__)
+        if not running:
+            reachable = False
+        elif name == "null":
+            reachable = True
+        else:
+            reachable = consecutive == 0
         return {
-            "running": self._sender.running,
-            "transport": getattr(self._transport, "name", type(self._transport).__name__),
+            "running": running,
+            "transport": name,
             "frames_sent": getattr(self._transport, "send_count", None),
             "destination": f"{destination[0]}:{destination[1]}" if destination else None,
             "send_failures": getattr(self._transport, "failure_count", None),
+            "reachable": reachable,
         }
 
     def _run_show(self) -> None:
@@ -246,7 +268,7 @@ class ShowEngine:
                 logger.exception("show thread survived a failure handling %s", command.kind)
 
     def _handle(self, command: ShowCommand) -> None:
-        frames_before = publish_count()
+        frames_before = self._universe.publish_count()
         # Queued before the work, because publishing wakes the sender immediately and it
         # may finish the ack before this method returns.
         self._awaiting_send.put((command.received_ns, command.ack_id))
@@ -268,12 +290,13 @@ class ShowEngine:
             self._reject(command, f"{type(exc).__name__}: {exc}", warn=False)
             return
 
+        self._last_error = None
         if command.kind is CommandKind.BEAT:
             # Performance flashes from this event, whether the beat was a manual tap or
             # (later) the audio thread — the client must not care about the source.
             self._emit(ShowEvent("beat", {}))
 
-        if publish_count() == frames_before:
+        if self._universe.publish_count() == frames_before:
             # Nothing reached the wire — a deactivate, or a beat mid-cue. There is no
             # packet to time, so acknowledge here instead of leaving the client waiting.
             self._discard_pending(command)
@@ -300,6 +323,7 @@ class ShowEngine:
     def _reject(self, command: ShowCommand, message: str, *, warn: bool = True) -> None:
         """Report a command that did not run. State is unchanged, so none is emitted."""
         self._discard_pending(command, ack=False)
+        self._last_error = message
         if warn:
             logger.warning("rejected %s: %s", command.kind.value, message)
         self._emit(ShowEvent("error", {"id": command.ack_id, "message": message}))

@@ -86,21 +86,6 @@
     }
   }
 
-  async function findOrCreatePreset(dmxListId, wledListId) {
-    var found = presets.find(function (preset) {
-      return preset.dmx_preset_list_id === dmxListId && preset.wled_preset_list_id === wledListId;
-    });
-    if (found) {
-      return found;
-    }
-    var created = await api.presets.create({
-      dmx_preset_list_id: dmxListId,
-      wled_preset_list_id: wledListId,
-    });
-    presets.push(created);
-    return created;
-  }
-
   async function refresh() {
     dmxLists = await api.dmxLists.list();
     wledLists = await api.wledLists.list();
@@ -128,15 +113,15 @@
       return;
     }
     try {
-      var preset = await findOrCreatePreset(dmxListId, wledListId);
+      var body = {
+        dmx_preset_list_id: dmxListId,
+        wled_preset_list_id: wledListId,
+      };
       var saved;
       if (editingId) {
-        saved = await api.scenes.update(editingId, {
-          preset_id: preset.id,
-          ilda_frame_list_id: ildaByScene[editingId] || null,
-        });
+        body.ilda_frame_list_id = ildaByScene[editingId] || null;
+        saved = await api.scenes.update(editingId, body);
       } else {
-        var body = { preset_id: preset.id };
         var slug = idInput.value.trim();
         if (slug) {
           body.id = slug;
