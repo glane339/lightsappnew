@@ -144,7 +144,7 @@ class AudioEngineBeatSource:
 
 
 def _result_level(result: object) -> Optional[float]:
-    for attr in ("level", "rms", "energy"):
+    for attr in ("current_level", "level", "rms", "energy"):
         value = getattr(result, attr, None)
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             continue

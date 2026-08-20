@@ -18,6 +18,16 @@ class FakeResult:
     beat_events: tuple[FakeBeat, ...]
 
 
+@dataclass(frozen=True)
+class ContractAccurateResult:
+    """Mirrors the pinned ``lights_audio_engine.AudioAnalysisResult`` fields."""
+
+    bpm: float | None
+    beat_events: tuple[FakeBeat, ...]
+    drop_events: tuple[object, ...]
+    current_level: float
+
+
 class FakeSource:
     def __init__(self) -> None:
         self.closed = False
@@ -99,4 +109,23 @@ def test_adapter_reports_silent_when_frames_have_no_beats() -> None:
         assert adapter.health()["running"] is True
     finally:
         hold.set()
+        adapter.stop()
+
+
+def test_adapter_reports_current_level_from_audio_engine_result() -> None:
+    source = FakeSource()
+
+    def runner(_source: object, _engine: object) -> Iterator[ContractAccurateResult]:
+        yield ContractAccurateResult(
+            bpm=128.5,
+            beat_events=(),
+            drop_events=(),
+            current_level=0.23,
+        )
+
+    adapter = AudioEngineBeatSource(source, object(), runner=runner)
+    adapter.start()
+    try:
+        assert _wait_for(lambda: adapter.health()["level"] == 0.23)
+    finally:
         adapter.stop()
