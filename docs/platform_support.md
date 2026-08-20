@@ -151,6 +151,36 @@ Two consequences worth knowing:
   `root` in tests, or the real data folder is modified —
   [AF-M05](audit_findings.md#af-m05).
 
+### Unsupported collection-file recovery
+
+Collection files must use the object envelope shown above, with an `items` object.
+The repository's supported historical schemas all use that envelope; a top-level JSON
+list (for example in `scenes.json` or `presets.json`) is not a supported migration
+format. The app deliberately quarantines such a file rather than converting or
+overwriting it.
+
+To recover safely on Windows:
+
+1. Stop Lights App and make a complete copy of `%LOCALAPPDATA%\LightsApp` before
+   another startup attempt. For example:
+
+   ```powershell
+   $root = Join-Path $env:LOCALAPPDATA "LightsApp"
+   $recovery = "$root.pre-list-recovery-$(Get-Date -Format yyyyMMdd-HHmmss)"
+   Copy-Item -LiteralPath $root -Destination $recovery -Recurse
+   ```
+
+2. Start the app. It moves the first unsupported collection it encounters to
+   `%LOCALAPPDATA%\LightsApp\backups\<timestamp>-corrupt\` and stops startup. Repeat
+   only until every affected collection has been quarantined; never move a quarantined
+   file back into `data`.
+3. Start the app again after the affected files are absent. Missing collections load as
+   empty. Keep both the recovery copy and the quarantined files, then manually recreate
+   or separately inspect the unsupported data before attempting any import.
+
+`LIGHTSAPP_DATA_DIR` changes the root in every path above; use that directory instead
+of `%LOCALAPPDATA%\LightsApp` when it is set.
+
 ---
 
 ## Network
