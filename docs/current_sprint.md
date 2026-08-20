@@ -11,6 +11,11 @@ Longer horizon in [roadmap.md](roadmap.md).
 
 ## Future plans
 
+> **Updated 2026-08-19.** WS-11.2 Performance + Builder pages are in `frontend/`.
+> Docs aligned with that; remaining UI work is WS-9 health, not a second frontend.
+> Suite is **211** tests. Current maturity in
+> [project_overview.md](project_overview.md#current-maturity).
+
 > **Session closed 2026-08-10.** Nothing below is in progress — it is the queue for
 > when work resumes. Current maturity in
 > [project_overview.md](project_overview.md#current-maturity).
@@ -45,10 +50,10 @@ Longer horizon in [roadmap.md](roadmap.md).
 | E1.31 framing + `E131Transport` (`runtime/e131.py`, opt-in via `dmx.transport`) | Done in code (WS-4.4), **unverified on hardware** |
 | Send-on-change seam (`publish()` / `dmx_dirty`) | Done |
 | Operator server M1 (`backend/main.py`, `/ws/show`, REST control, latency) | Done (WS-11.1) |
-| M1 operator page (`frontend/index.html`) | Done |
+| WS-11.2 Performance + Builder UI | Done (remaining: WS-9 health on Performance; optional LEDfx refresh / scene helper) |
 | WLED off show thread (`AsyncCueOutput` + worker) | Done (WS-5 wiring in engine) |
 | Show authoring (`AuthoringService`, typed HTTP, [D-022](decisions.md#d-022-empty-cue-lists-cannot-be-authored)) | Done (WS-10) |
-| 171-test suite | Done |
+| 211-test suite | Done |
 | Audit v2 merge + post-audit doc refresh | Done |
 | Server/runtime audit v3 at `acc52a7` — READY WITH MINOR FIXES ([findings F-01…F-15](audit_findings.md#findings-summary)) | Done (fixes **not** implemented) |
 
@@ -65,9 +70,9 @@ Longer horizon in [roadmap.md](roadmap.md).
 3. **WS-9 · Real beat detection** — live audio is wired into look cycling;
    remaining: capture health, WASAPI loopback as a named device, BPM in the UI.
    `ManualBeatSource` stays for tests.
-4. **WS-11.2 · Full frontend** — Performance + Builder UI per
-   [frontend_architecture.md](frontend_architecture.md); thin client of
-   [authoring.md](authoring.md).
+4. **WS-11.2 remainder** — pages exist; Performance still needs audio health, and
+   optional `POST /api/ledfx/refresh` / scene-save helper are not in the API. See
+   [frontend_architecture.md](frontend_architecture.md).
 
 Longer arc: [roadmap.md](roadmap.md) phases 4 → 5 → 7 → **7a** → 8.
 
@@ -82,7 +87,7 @@ Longer arc: [roadmap.md](roadmap.md) phases 4 → 5 → 7 → **7a** → 8.
 | ILDA output | WS-7 / phase 9 | Laser path severed; safety gates first |
 | CI workflow | WS-6 / audit P0 | No blocker for local dev |
 
-### Before building the full frontend
+### When changing the frontend
 
 Read [frontend_architecture.md](frontend_architecture.md) (routes, modes, builder
 pages) and [authoring.md](authoring.md) (HTTP contract). The UI must not call
@@ -111,7 +116,7 @@ flowchart LR
 WS-6 comes before schema changes deliberately: the storage layer's cascade and
 pruning logic is the code most likely to break under model changes. WS-6.1 is
 **done** ([AF-H05](audit_findings.md#af-h05) partially addressed). WS-10 is **done**
-— [authoring.md](authoring.md) is the HTTP contract WS-11.2 will consume.
+— [authoring.md](authoring.md) is the HTTP contract WS-11.2 consumes.
 
 ---
 
@@ -577,7 +582,7 @@ migratable through `REFERENCES` in [`records.py`](../backend/storage/records.py)
 > ([D-022](decisions.md#d-022-empty-cue-lists-cannot-be-authored)).
 
 Depends on WS-2 (model) and WS-3 (semantics of `beats` and scene activation).
-Blocks WS-11.2 (full frontend). The M1 operator server (WS-11.1) already exists.
+Unblocked WS-11.2 (now done). The M1 operator server (WS-11.1) already exists.
 
 ### 10.1 DMX cue list creation framework
 - **Goal.** Create, update, reorder, and validate `DMX_Preset_List` objects: ordered
@@ -684,8 +689,8 @@ Blocks WS-11.2 (full frontend). The M1 operator server (WS-11.1) already exists.
 ## WS-11 · Frontend and HTTP server
 
 > **M1 landed (2026-08-13).** Entry point, control plane, latency harness, and a
-> no-build operator page exist. Full authoring UI (11.2) can now consume
-> [authoring.md](authoring.md).
+> no-build operator page exist. WS-11.2 (2026-08-19 docs status) consumed
+> [authoring.md](authoring.md) as Performance + Builder pages in `frontend/`.
 
 ### 11.1 App entry point and process lifecycle
 - **Goal.** A runnable process: open `Library`, `configure_logging()`, wire
@@ -701,7 +706,7 @@ Blocks WS-11.2 (full frontend). The M1 operator server (WS-11.1) already exists.
   [`backend/server/engine.py`](../backend/server/engine.py).
 
 ### 11.2 Frontend application
-- **Goal.** Replace M1 with two modes ([frontend_architecture.md](frontend_architecture.md)):
+- **Goal.** Two modes ([frontend_architecture.md](frontend_architecture.md)):
   **Performance** (scene grid + beat indicator on `/ws/show`) and **Builder** (six
   authoring pages over the REST API).
 - **Why.** M1 is a latency harness with a scene picker; the operator needs fixture-aware
@@ -720,12 +725,12 @@ Blocks WS-11.2 (full frontend). The M1 operator server (WS-11.1) already exists.
   - Performance activates scenes over WebSocket; beat bar flashes on server beat events.
   - No graph logic duplicated in JavaScript; all mutations via authoring routes.
   - M1 latency readout moved to `/diag/` or removed from the show path.
-- **Backend gaps (fold into 11.2 or immediately before Performance beat UI):**
-  `{t:"beat"}` on `/ws/show`; optional `POST /api/ledfx/refresh`; optional scene
-  save helper that accepts two cue-list ids.
-- **Status.** **Planned** — [frontend_architecture.md](frontend_architecture.md)
-  written 2026-08-17; code not started.
-- **Files.** [frontend_architecture.md](frontend_architecture.md);
-  `frontend/` (multi-page static client); see plan for tree.
+- **Backend gaps (optional follow-ups, not required for the pages to work):**
+  `{t:"beat"}` on `/ws/show` is **done**; optional `POST /api/ledfx/refresh`; optional
+  scene save helper that accepts two cue-list ids (the Scenes page pairs in JS).
+- **Status.** **Done** — pages in `frontend/` as specified in
+  [frontend_architecture.md](frontend_architecture.md). Remaining: WS-9 health on
+  Performance (BPM / level / silence vs dead capture).
+- **Files.** [frontend_architecture.md](frontend_architecture.md); `frontend/`.
 
 ---

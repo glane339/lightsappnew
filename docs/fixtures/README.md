@@ -75,8 +75,8 @@ here needs to change when a device is re-patched.
 
 ## Frontend profiles (WS-11.2)
 
-The planned Builder UI ([frontend_architecture.md](../frontend_architecture.md))
-transcribes these channel tables into static JavaScript profiles under
-`frontend/js/fixtures/` (one file per `DMX_Device.model`). The profiles drive
-section toggles and labelled controls in max-channel mode; the library still stores
-only `channel_values` arrays via `DMX_Device_Preset`.
+The Builder UI ([frontend_architecture.md](../frontend_architecture.md)) transcribes
+these channel tables into static JavaScript profiles under `frontend/js/fixtures/`
+(one file per `DMX_Device.model`). The profiles drive section toggles and labelled
+controls in max-channel mode; the library still stores only `channel_values` arrays
+via `DMX_Device_Preset`.

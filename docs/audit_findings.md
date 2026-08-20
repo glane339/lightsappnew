@@ -10,6 +10,10 @@ than by duplicating the finding.
 > **Terminology.** A "look" is a `dmx_preset` (`DMX_Preset`). Use `dmx_preset` going
 > forward — [D-023](decisions.md#d-023-a-look-is-a-dmx_preset). Historical findings
 > below keep their original wording.
+>
+> **After v3.** Work landed after `acc52a7` is not restated in the snapshot tables
+> below. Current maturity (WS-11.2 UI, `E131Transport`, test count) is in
+> [project_overview.md](project_overview.md).
 
 ---
 

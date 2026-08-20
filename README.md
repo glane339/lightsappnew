@@ -29,16 +29,15 @@ reached the rig yet. See
   - `ledfx/` — LEDfx HTTP client and scene sync (null by default)
   - `config/` — compile-time defaults that seed persisted `AppConfig`
   - `logging_setup.py` — file + stderr logging into the data-folder `logs/`
-- `frontend/` — static operator UI (M1 scene picker today; WS-11.2 plan in
-  [docs/frontend_architecture.md](docs/frontend_architecture.md))
-- `tests/` — pytest suite (storage, sequencing, outputs, server; temp data root)
+- `frontend/` — static operator UI (Performance + Builder; [docs/frontend_architecture.md](docs/frontend_architecture.md))
+- `tests/` — pytest suite (storage, sequencing, outputs, sender, server; temp data root)
 - `docs/` — architecture documentation ([start here](docs/project_overview.md))
   - `fixtures/` — per-model DMX channel tables ([index](docs/fixtures/README.md))
 - `requirements.txt` — Python dependencies
 - `AGENTS.md` — Instructions for AI coding agents
 
-A `frontend/` directory holds the M1 operator page. The full UI (Performance +
-Builder modes) is specified in
+A `frontend/` directory holds Performance, Builder, Diag, and About pages. Layout
+and remaining gaps are in
 [docs/frontend_architecture.md](docs/frontend_architecture.md) (WS-11.2).
 
 ## Setup
@@ -51,8 +50,8 @@ py -3.12 -m venv .venv
 pip install -r requirements.txt
 ```
 
-(The working environment in this repository lives at `.venv/`; both `venv/` and
-`.venv/` are gitignored.)
+(Create the env at `venv/` or `.venv/` — both are gitignored. This repo's working
+copy uses `venv/`; examples below use `.venv/` interchangeably.)
 
 Imports are absolute from `backend/` (no package `__init__.py`). pytest sets
 `pythonpath = backend` via `pytest.ini`.

@@ -30,11 +30,13 @@ remote-access requirement in the repository today.
 ## Current maturity
 
 > **The repository has a persistence layer, a beat-driven show-control core, an
-> operator HTTP server, live audio into look cycling, and a symbolic DMX sender.**
-> It is not yet a complete show: capture health is not on the UI, nothing transmits
-> E1.31 until opted in, and authoring UI is a picker only.
+> operator HTTP server, live audio into look cycling, Performance + Builder UI, and
+> an E1.31 sender that stays off until opted in.**
+> It is not yet a complete show: capture health is not on the UI, and nothing
+> transmits E1.31 until `dmx.transport` is `"e131"`.
 
-There is an app entry point (`backend/main.py`) and a no-build operator page.
+There is an app entry point (`backend/main.py`) and a no-build Performance / Builder
+UI.
 Live audio starts with the process when a capture device is usable. A pytest suite
 covers storage, sequencing, outputs, the sender wake path, the server, and the audio
 adapter (without opening PortAudio).
@@ -56,11 +58,11 @@ Nothing is hardware-proven; the latency evidence is software-path only.
 | Operator server | **M1 done + authoring HTTP** | [`backend/main.py`](../backend/main.py), FastAPI on `0.0.0.0:8800`, WebSocket `/ws/show`, REST `/api/show/*` and typed authoring CRUD |
 | Beat source boundary | **Protocol + live adapter** | [`audio/beat_source.py`](../backend/audio/beat_source.py), [`audio/audio_engine_source.py`](../backend/audio/audio_engine_source.py); manual tap still works |
 | Audio / beat detection | **Wired into look cycling** | `lights-audio-engine` on a worker; beats are `ShowCommand(BEAT)`. Silence vs dead capture is not on `/api/status` |
-| DMX transport (E1.31/sACN) | **Symbolic only** | [`runtime/sender.py`](../backend/runtime/sender.py) — `NullTransport` + send-on-change thread; no packets, no sockets |
+| DMX transport (E1.31/sACN) | **Code landed, unverified on hardware** | [`runtime/e131.py`](../backend/runtime/e131.py) + `E131Transport`; default is still `NullTransport` until `dmx.transport` is `"e131"` |
 | WLED / LEDfx integration | **Wired off show thread** | [`AsyncCueOutput`](../backend/runtime/outputs.py) + worker in [`server/engine.py`](../backend/server/engine.py); `LedfxConfig.enabled` defaults false |
 | ILDA processing | **Storage only** | [`.ild` blob store](../backend/storage/ilda_blobs.py); nothing parses or plays |
-| UI / frontend | **M1 operator page; WS-11.2 planned** | [`frontend/index.html`](../frontend/index.html); plan in [frontend_architecture.md](frontend_architecture.md) |
-| Tests | **171 tests** | storage, sequencing, outputs, sender, server, authoring, latency |
+| UI / frontend | **WS-11.2 done** | Performance + Builder in [`frontend/`](../frontend/); [frontend_architecture.md](frontend_architecture.md) |
+| Tests | **211 tests** | storage, sequencing, outputs, sender, e131, server, authoring, latency |
 | CI | **Absent** | no workflow files |
 | Logging | **Implemented** | [`backend/logging_setup.py`](../backend/logging_setup.py); storage events log to `logs/` |
 
@@ -77,8 +79,10 @@ three intended output domains:
 1. **DMX512 over E1.31/sACN** — data modelled ([`DMX_Device`](../backend/models/DMX_Device.py),
    [`DMX_Preset`](../backend/models/DMX_Preset.py),
    [`DMX_Device_Preset`](../backend/models/DMX_Device_Preset.py),
-   [`Active_DMX_Channels`](../backend/models/Active_DMX_Channels.py)); symbolic sender only
-   ([`runtime/sender.py`](../backend/runtime/sender.py)). Channel tables per model in
+   [`Active_DMX_Channels`](../backend/models/Active_DMX_Channels.py)); framing and
+   `E131Transport` exist, default transport is still `NullTransport`
+   ([`runtime/sender.py`](../backend/runtime/sender.py),
+   [`runtime/e131.py`](../backend/runtime/e131.py)). Channel tables per model in
    [docs/fixtures/](fixtures/README.md).
 2. **WLED via LEDfx** — [`WLED_Preset`](../backend/models/WLED_Preset.py) stores the
    LEDfx scene name as `id`; [`WLED_Preset_List`](../backend/models/WLED_Preset_List.py)
@@ -129,13 +133,16 @@ What the code actually does today:
   measured from scene selection (command received on the server) through
   `DmxTransport.send` returning;
   no packet, network, DMX line, or fixture time is included —
-  [`backend/server/`](../backend/server/), [`frontend/index.html`](../frontend/index.html).
-- Wakes a symbolic DMX sender on buffer change (`publish()` → `dmx_dirty` →
-  `SenderThread` → `NullTransport`) —
+  [`backend/server/`](../backend/server/), [`frontend/`](../frontend/).
+- Wakes the DMX sender on buffer change (`publish()` → `dmx_dirty` →
+  `SenderThread` → `NullTransport` or `E131Transport`) —
   [`runtime/sender.py`](../backend/runtime/sender.py), [`runtime/active.py`](../backend/runtime/active.py).
 - Creates and updates the show graph through `AuthoringService` and typed REST
   (`/api/scenes`, `/api/presets`, cue lists, looks) —
   [`authoring/service.py`](../backend/authoring/service.py), [authoring.md](authoring.md).
+- Serves Performance (scene grid + beat flash) and Builder (fixture editors, looks,
+  cue lists, scenes) as static pages — [`frontend/`](../frontend/),
+  [frontend_architecture.md](frontend_architecture.md).
 - Runs a pytest suite against temp data roots — [`tests/`](../tests/).
 
 ## Major incomplete areas
@@ -160,9 +167,9 @@ Ranked by how much they block a working system:
    and `E131Transport` frame and send real packets, verified over loopback and by
    byte-level tests. `dmx.transport` defaults to `"null"`, so nothing transmits until
    it is opted in, and no frame has reached the physical rig yet.
-5. **Full operator UI is M1 only** — scene picker + latency readout; WS-11.2
-   (Performance + Builder) is planned in [frontend_architecture.md](frontend_architecture.md)
-   and consumes [authoring.md](authoring.md).
+5. **Operator UI is Performance + Builder** — pages are in `frontend/`; remaining
+   work is capture health on Performance (WS-9), not a second UI. See
+   [frontend_architecture.md](frontend_architecture.md).
 
 ## System boundaries
 
@@ -198,7 +205,7 @@ names the concrete repository type.
 | **Universe buffer** | The live 512 channel values sent to the wire | [`Active_DMX_Channels`](../backend/models/Active_DMX_Channels.py) |
 | **WLED cue list** | Ordered sequence of LEDfx presets | [`WLED_Preset_List`](../backend/models/WLED_Preset_List.py) |
 | **LEDfx preset** | An effect configuration owned by LEDfx | [`WLED_Preset`](../backend/models/WLED_Preset.py) — `id` is the scene name |
-| **Transport** | E1.31/sACN packet emission over Ethernet | **Symbolic** — [`DmxTransport`](../backend/runtime/sender.py) + `NullTransport`; no packets |
+| **Transport** | E1.31/sACN packet emission over Ethernet | [`DmxTransport`](../backend/runtime/sender.py) — `NullTransport` default; `E131Transport` when `dmx.transport` is `"e131"` |
 
 A **dmx_preset** is a static state; a **cue list** is a time-ordered sequence of
 those states. Do not call a `dmx_preset` a "look" in new writing
@@ -238,10 +245,8 @@ E1.31 until `dmx.transport` is `"e131"`.
    [D-020](decisions.md#d-020-hand-rolled-e131-framing)).
 2. **Finish WS-9 operator loop** — WASAPI loopback as `input_device` when the music
    is on the same PC; silence vs dead capture on `/api/status` and Performance; BPM
-   display-only. `ManualBeatSource` stays for tests.
-3. **Full operator UI (WS-11.2)** — Performance + Builder per
-   [frontend_architecture.md](frontend_architecture.md); thin client of
-   [authoring.md](authoring.md).
+   display-only. `ManualBeatSource` stays for tests. Performance + Builder pages
+   already exist ([frontend_architecture.md](frontend_architecture.md)).
 
 Detail: [current_sprint.md § Future plans](current_sprint.md#future-plans) and
 [WS-4.4](current_sprint.md#44-real-sacn-sender).
@@ -257,25 +262,25 @@ flowchart LR
         S2["Library + integrity"]
         S3["SceneController<br/>+ sequencers"]
         S4["ShowEngine<br/>+ operator server"]
-        S5["SenderThread<br/>NullTransport"]
+        S5["SenderThread<br/>NullTransport default"]
         S6["LEDfx client + sync<br/>+ WLED worker"]
         S7["AuthoringService<br/>typed HTTP"]
         S8["AudioEngineBeatSource<br/>+ look cycling"]
+        S9["Performance + Builder<br/>frontend/"]
         S1 --> S2 --> S3 --> S4
         S3 --> S5
         S4 --> S6
         S4 --> S7
         S4 --> S8
+        S7 --> S9
     end
     subgraph gap["Not implemented"]
-        G1["E1.31 packets<br/>E131Transport"]
+        G1["E1.31 on the physical box"]
         G2["Audio health / loopback UX"]
-        G4["Full frontend<br/>WS-11.2"]
         G5["ILDA output"]
     end
-    S5 -.->|"WS-4.4"| G1
+    S5 -.->|"WS-4.4 hardware"| G1
     S8 -.-> G2
-    S7 -.-> G4
 ```
 
 ---
@@ -292,7 +297,7 @@ flowchart LR
 | What about the laser? | [laser_and_haze_safety.md](laser_and_haze_safety.md) |
 | What is wrong with the code today? | [audit_findings.md](audit_findings.md) |
 | What should I build next? | [current_sprint.md](current_sprint.md) · [Next steps (actual sender)](project_overview.md#next-steps-priority-order) |
-| How do I create scenes/presets from a UI? | [frontend_architecture.md](frontend_architecture.md) · [authoring.md](authoring.md) · [WS-11.2](current_sprint.md#112-frontend-application) |
+| How do I create scenes/presets from a UI? | [frontend_architecture.md](frontend_architecture.md) · [authoring.md](authoring.md) |
 | What pages does the frontend have? | [frontend_architecture.md](frontend_architecture.md) |
 | What is the long-term plan? | [roadmap.md](roadmap.md) |
 | Why was it built this way? | [decisions.md](decisions.md) |

@@ -11,10 +11,12 @@ Guidance for AI coding agents working in this repository.
 
 ## Python environment
 
-- Use the project venv at `venv/` (Python 3.12)
+- Use the project venv at `venv/` (Python 3.12). `.venv/` is also gitignored if
+  you created the env under that name.
 - Install packages with `.\venv\Scripts\python.exe -m pip install <package>`
+  (or `.\.venv\Scripts\python.exe` if that is your env path)
 - When adding a dependency, update `requirements.txt` with the pinned version
-- Do not commit `venv/`
+- Do not commit `venv/` or `.venv/`
 
 ## Coding conventions
 

@@ -26,7 +26,7 @@ Follow-up.
 | [D-011](#d-011-hold-between-scenes-blackout-on-clean-shutdown) | Hold between scenes, blackout on clean shutdown | Accepted |
 | [D-012](#d-012-network-failures-must-not-reach-persistent-state) | Network failures must not reach persistent state | Proposed |
 | [D-013](#d-013-hardware-output-defaults-to-a-null-implementation) | Hardware output defaults to a null implementation | Accepted |
-| [D-014](#d-014-fixtures-become-first-class-persisted-objects) | Fixtures become first-class persisted objects | Proposed |
+| [D-014](#d-014-fixtures-become-first-class-persisted-objects) | Fixtures become first-class persisted objects | Accepted |
 | [D-015](#d-015-the-reference-graph-stays-declarative) | The reference graph stays declarative | Accepted |
 | [D-016](#d-016-audio-event-delivery-mechanism) | Audio event delivery mechanism | Accepted |
 | [D-017](#d-017-sacn-unicast-versus-multicast) | sACN unicast versus multicast | Accepted |
@@ -41,7 +41,7 @@ Follow-up.
 ## D-001: Scene is the top-level manually selected unit
 
 **Status:** Accepted and implemented — `SceneController.activate()` is the sole entry
-point. No UI calls it yet.
+point. Performance activates scenes over `/ws/show`.
 
 **Context.** Something has to be the unit an operator picks. `Scene` sits at the top
 of the reference graph: it is a `ROOT_COLLECTION`
@@ -133,7 +133,8 @@ both consult (rejected: makes independent cue-list lengths awkward).
 
 ## D-004: LEDfx owns WLED output
 
-**Status:** Accepted — supplied project requirement; no WLED or LEDfx code exists.
+**Status:** Accepted — supplied project requirement. LEDfx client, scene sync, and
+WLED worker exist; `LedfxConfig.enabled` defaults false.
 
 **Context.** The application could render pixels itself and push them to WLED over
 DDP or the WLED JSON API, or it could delegate to LEDfx and only select presets.
@@ -216,7 +217,8 @@ documents (rejected: duplicates shared objects).
 
 ## D-007: E1.31 / sACN is the DMX transport
 
-**Status:** Accepted — supplied project requirement; only a symbolic sender exists.
+**Status:** Accepted — supplied project requirement. Framing and `E131Transport`
+exist; default transport is still `NullTransport`.
 
 **Context.** The rig uses a custom DMX universe box that receives Ethernet traffic
 and drives the physical DMX bus. Options are E1.31/sACN, Art-Net, or a USB DMX
@@ -229,8 +231,8 @@ component trivially narrow: take 512 bytes, frame them, send them.
 **Consequences.** The sender knows nothing about scenes, looks, or beats. The
 universe box becomes an opaque endpoint defined only by IP and universe number
 ([fixture_and_transport_strategy.md](fixture_and_transport_strategy.md#6-the-custom-universe-box-boundary)).
-Multi-universe becomes an addressing question rather than a hardware one. A network
-library dependency will be required.
+Multi-universe becomes an addressing question rather than a hardware one. Framing is
+hand-rolled ([D-020](#d-020-hand-rolled-e131-framing)); no sACN library is required.
 
 **Alternatives.** Art-Net (viable; the box's actual protocol has not been verified
 from the repository); USB DMX (rejected: the hardware is networked).
@@ -243,9 +245,11 @@ manual in local `config.json` only —
 [fixture_and_transport_strategy.md §6](fixture_and_transport_strategy.md#6-the-custom-universe-box-boundary)).
 **Unicast** to the switch IP ([D-017](#d-017-sacn-unicast-versus-multicast)); `source_name`
 is on `DMXConfig`. Box **blackouts when packets stop**
-([§6](fixture_and_transport_strategy.md#6-the-custom-universe-box-boundary)). A symbolic
-sender ([`runtime/sender.py`](../backend/runtime/sender.py)) exists and defaults to
-`NullTransport`; no E1.31 packet is framed or sent.
+([§6](fixture_and_transport_strategy.md#6-the-custom-universe-box-boundary)).
+[`runtime/e131.py`](../backend/runtime/e131.py) frames packets; `E131Transport` sends
+them when `dmx.transport` is `"e131"`. The default remains `NullTransport`
+([D-013](#d-013-hardware-output-defaults-to-a-null-implementation)). Hardware
+sign-off is still outstanding.
 
 ---
 
@@ -394,9 +398,8 @@ emit anything.
 no debugging session, and no accidental import can transmit a packet or an HTTP
 call. Opting in to real output is a deliberate act.
 
-**Consequences.** The DMX path is `DmxTransport` with `NullTransport` as the only
-implementation. A real E1.31 class is not in the tree. Config still carries
-destination fields, but nothing reads them for a socket.
+**Consequences.** The DMX path is `DmxTransport` with `NullTransport` as the default.
+`E131Transport` is in the tree and selected only when `dmx.transport` is `"e131"`.
 
 **Alternatives.** Real-by-default with a test flag (rejected: one forgotten flag
 sends real traffic).
@@ -465,30 +468,30 @@ Checklist in [current_sprint.md § 4.4](current_sprint.md#44-real-sacn-sender--n
 
 ## D-014: Fixtures become first-class persisted objects
 
-**Status:** Proposed — the single most important pending change.
+**Status:** **Accepted and implemented** — [`DMX_Device`](../backend/models/DMX_Device.py)
+is a root collection; `DMX_Device_Preset.device_id` points at it;
+[`runtime/active.py`](../backend/runtime/active.py) resolves addresses from the patch
+(WS-2.1 / schema v3). Multi-universe *buffers* remain deferred (universe stored,
+rejected if ≠ 1).
 
-**Context.** DMX start addresses are currently derived by packing device states
-contiguously in `order` sequence
-([`active.py:37-49`](../backend/runtime/active.py#L37-L49)); no fixture definition
-exists.
+**Context.** DMX start addresses were previously derived by packing device states
+contiguously in `order` sequence; no fixture definition existed
+([AF-H01](audit_findings.md#af-h01)).
 
 **Rationale.** The physical rig's patch is a stable fact about the installation and
 belongs in one place. Deriving it per look means the rig is redescribed in every
 look, with no source of truth to check against the fixtures' DIP switches.
 
-**Consequences.** A new `fixtures` collection (id, name, universe, start_address,
-channel_count); `DMX_Device_Preset.order` becomes `fixture_id`. Address gaps and
-multiple universes become expressible. Integrity checking and cascade delete work
-automatically once the relationship is added to `REFERENCES` (D-015). Requires a
-schema migration — the machinery exists and snapshots first
-([`migrations.py:66`](../backend/storage/migrations.py#L66)).
+**Consequences.** `dmx_devices` holds id, name, model, mode, universe, start_address,
+channel_count; device presets reference `device_id`. Address gaps are expressible.
+Integrity checking and cascade delete follow `REFERENCES` (D-015).
 
 **Alternatives.** Keeping positional derivation (rejected: [AF-H01](audit_findings.md#af-h01));
 adding a full fixture-profile library now (rejected: D-010 — identity and addressing
-first, semantics later).
+first, semantics later). Builder editors transcribe channel tables in
+`frontend/js/fixtures/` without changing storage.
 
-**Follow-up.** This is the recommended next implementation branch, and it needs the
-storage test suite ([AF-H05](audit_findings.md#af-h05)) in place first.
+**Follow-up.** None for identity/addressing. Semantic profiles stay frontend-only.
 
 ---
 

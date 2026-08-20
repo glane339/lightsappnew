@@ -21,7 +21,7 @@ what is currently implicit rather than documented.
   with the comment *"keeps Windows at `%LOCALAPPDATA%\LightsApp` instead of nesting
   under a vendor folder"* — the only OS named in the codebase.
 - [`README.md`](../README.md) gives setup instructions in PowerShell
-  (`.\venv\Scripts\Activate.ps1`).
+  (`.\.venv\Scripts\Activate.ps1`; `venv/` is equivalent).
 - [`AGENTS.md`](../AGENTS.md) uses `.\venv\Scripts\python.exe`.
 
 **Nothing in the code is Windows-only.** The storage layer uses `pathlib`,
@@ -43,7 +43,7 @@ which is required for the replace to work across all platforms.
 | --- | --- |
 | **Documented requirement** | Python 3.12+ ([`README.md`](../README.md)) |
 | **Actual minimum from the code** | 3.9 or later — `from __future__ import annotations` plus `typing.Dict`/`List` (not PEP 585 builtins) throughout, and `Path.unlink(missing_ok=True)` at [`json_store.py:45`](../backend/storage/json_store.py#L45) requires 3.8+ |
-| **Observed locally (2026-08-13)** | `.venv/` at the repository root with **Python 3.12.10**; the full suite runs from it |
+| **Observed locally** | `venv/` at the repository root with **Python 3.12**; `.venv/` has also been used. Both names are gitignored. |
 
 Nothing requires 3.12 specifically. The version in the README is a preference, not a
 constraint. (An earlier pass observed 3.11.9 with no venv — that machine state is
@@ -51,17 +51,15 @@ historical; superseded per [AF2-L03](audit_findings.md#af2-l03).)
 
 ### Virtual environment
 
-The working environment lives at **`.venv/`** at the repository root (both
-`venv/` and `.venv/` are gitignored, [`.gitignore`](../.gitignore)):
+Create the env as **`venv/`** or **`.venv/`** — both are gitignored
+([`.gitignore`](../.gitignore)). [`AGENTS.md`](../AGENTS.md) uses `venv/`;
+[`README.md`](../README.md) examples use `.venv/`. Either works:
 
 ```powershell
-py -3.12 -m venv .venv
-.\.venv\Scripts\Activate.ps1
+py -3.12 -m venv venv
+.\venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 ```
-
-[`AGENTS.md`](../AGENTS.md) and some older docstrings still say `venv/`
-([AF2-L03](audit_findings.md#af2-l03), partly corrected).
 
 ### Dependencies
 
@@ -221,7 +219,8 @@ the box is still pending.
 From the repository root:
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest
+.\venv\Scripts\python.exe -m pytest
+# or: .\.venv\Scripts\python.exe -m pytest
 ```
 
 [`pytest.ini`](../pytest.ini) sets `pythonpath = backend` and `testpaths = tests`.
@@ -229,9 +228,10 @@ Fixtures use `tmp_path` for the data root — they do not touch
 `%LOCALAPPDATA%\LightsApp`. See [`tests/conftest.py`](../tests/conftest.py).
 
 Coverage today: storage round-trip, integrity, cascade delete, orphan pruning, ILDA
-folder sync, corrupt-file quarantine, archive import/export, schema v2 and v3
-migrations, DMX device addressing (gaps, overlap, universe bounds), logging setup.
-No show-loop or LEDfx HTTP integration tests yet.
+folder sync, corrupt-file quarantine, archive import/export, schema migrations, DMX
+device addressing, logging setup, sequencer, scene controller, sender, E1.31 byte
+tests, operator server, authoring HTTP, audio adapter (no PortAudio). LEDfx HTTP is
+covered only indirectly.
 
 ---
 
@@ -252,17 +252,17 @@ required to develop against the current codebase:
 
 ## Development versus production
 
-There is currently no production runtime process, but the show-control core is
-implemented as library code. The distinction that should be established as output
-components are wired into an entry point:
+`python backend/main.py` is the production-shaped process (operator server on
+`0.0.0.0:8800`). Real output stays opt-in:
 
 | | Development | Production (basement) |
 | --- | --- | --- |
-| DMX sender | `NullTransport` (the only implementation) | Real E1.31 sender, not in tree |
-| LEDfx client | Null or stub (default) | Real client against the LEDfx instance |
-| Audio | Scripted beat source | Live device |
+| DMX sender | `NullTransport` (default) | `E131Transport` when `dmx.transport` is `"e131"` |
+| LEDfx client | Off unless `ledfx.enabled` | Real client against the LEDfx instance |
+| Audio | Live capture if a device is usable; else manual tap | Same; WASAPI loopback still a raw device name |
 | Laser | Disabled, unimplemented | Disabled until [the prerequisites](laser_and_haze_safety.md#4-what-must-exist-before-output-is-enabled) are met |
 | Data folder | Temp `root` per test | `%LOCALAPPDATA%\LightsApp` |
+| UI | [`frontend/`](../frontend/) Performance + Builder | Same pages |
 
 Real output is always the opt-in — see
 [D-013](decisions.md#d-013-hardware-output-defaults-to-a-null-implementation).
@@ -274,7 +274,8 @@ Real output is always the opt-in — see
 - **Any laser output.** Not unsupported by omission — deliberately excluded.
 - **Multi-user or concurrent operators.** Single-operator by design.
 - **Remote or internet access.** The operator server binds `0.0.0.0:8800` on a
-  trusted LAN, with no auth. It does not open a DMX/E1.31 socket.
+  trusted LAN, with no auth. An E1.31 socket opens only when `dmx.transport` is
+  `"e131"`.
 - **Non-Windows deployment.** Not blocked by the code, but untested and not a target.
 - **Multi-universe DMX.** `DMX_Device.universe` is stored, but `Active_DMX_Channels` is
   still a single 512-value list and the runtime rejects any other universe.
@@ -293,6 +294,6 @@ Things a new contributor cannot learn from the repository without reading the so
 3. Application data lives outside the repository, in a platform-specific folder.
 4. `LIGHTSAPP_DATA_DIR` overrides that folder — use temp roots in tests.
 5. Constructing a `Library` has filesystem side effects, including writes.
-6. The virtual environment lives at `.venv/` at the repository root (gitignored).
+6. The virtual environment lives at `venv/` or `.venv/` at the repository root (gitignored).
 7. Python 3.12 is documented; 3.9+ is what the code actually needs.
 8. Run tests with `python -m pytest` from the repo root (see README).

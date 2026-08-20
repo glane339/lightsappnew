@@ -6,7 +6,12 @@
 > **Historical (2026-03).** The sections below document the architecture-review
 > session that created the initial `docs/` set at commit `691062e`.
 >
-> **Latest session (2026-08-17)** — WS-11.2 frontend plan written in
+> **Latest session (2026-08-19)** — documentation catch-up: WS-11.2 marked **done**
+> (Performance + Builder in `frontend/`), E1.31/`NullTransport` status aligned, D-014
+> accepted, test count **211**, `venv/` vs `.venv/` naming. Current maturity in
+> [project_overview.md](project_overview.md).
+>
+> **Historical (2026-08-17)** — WS-11.2 frontend plan written in
 > [frontend_architecture.md](frontend_architecture.md) (Performance + Builder modes,
 > six builder pages, fixture editors). Cross-linked from sprint, authoring, roadmap,
 > and architecture docs. No frontend code yet.

@@ -1,6 +1,8 @@
 # Authoring API
 
-Contract for creating and editing the show graph. The M1 operator page is selection-only; the planned frontend ([WS-11.2](current_sprint.md#112-frontend-application), [frontend_architecture.md](frontend_architecture.md)) is a thin client of these routes.
+Contract for creating and editing the show graph. Performance is selection-only;
+Builder ([WS-11.2](current_sprint.md#112-frontend-application),
+[frontend_architecture.md](frontend_architecture.md)) is a thin client of these routes.
 
 > **Terminology.** A "look" is a `dmx_preset` (`DMX_Preset`). Use `dmx_preset` going
 > forward — [D-023](decisions.md#d-023-a-look-is-a-dmx_preset).
@@ -16,7 +18,7 @@ channel values → DMX_Device_Preset → DMX_Preset → DMX_Preset_List ↘
 LEDfx name     → WLED_Preset                      → WLED_Preset_List → Preset → Scene
 ```
 
-Do **not** nest children inside a parent create. `POST /api/presets` pairs two existing cue lists. `POST /api/scenes` only names a playable preset and a sensitivity. A scene is refused unless the DMX side traces to at least one `dmx_device_preset` and the WLED side traces to registered LEDfx names.
+Do **not** nest children inside a parent create. `POST /api/presets` pairs two existing cue lists. `POST /api/scenes` only names a playable preset. A scene is refused unless the DMX side traces to at least one `dmx_device_preset` and the WLED side traces to registered LEDfx names.
 
 ## Ids
 
@@ -63,9 +65,9 @@ Devices have no write routes. ILDA is parked (`ilda_frame_list_id` is optional o
 | GET/POST | `/api/presets` | POST `{dmx_preset_list_id, wled_preset_list_id, id?}` — both lists must exist and be playable |
 | GET/PUT/DELETE | `/api/presets/{id}` | PUT swaps list ids |
 | GET | `/api/presets/{id}/delete-plan` | |
-| GET | `/api/scenes` | Picker summaries: `id`, `preset_id`, `sensitivity` |
-| POST | `/api/scenes` | Create; optional `id` slug and `sensitivity` |
-| GET/PUT/DELETE | `/api/scenes/{id}` | PUT is a full field replace |
+| GET | `/api/scenes` | Picker summaries: `id`, `preset_id` |
+| POST | `/api/scenes` | Create; optional `id` slug |
+| GET/PUT/DELETE | `/api/scenes/{id}` | PUT replaces `preset_id` (and optional `ilda_frame_list_id`) |
 | GET | `/api/scenes/{id}/delete-plan` | |
 
 POST create returns **201**. DELETE takes `?force=true` to cascade; without it, a referenced object is `409`. DELETE and delete-plan bodies:
@@ -77,7 +79,7 @@ POST create returns **201**. DELETE takes `?force=true` to cascade; without it, 
 }
 ```
 
-Editing a **running** scene: sensitivity is read live (takes effect immediately); a preset swap applies on the next activation.
+Editing a **running** scene: a preset swap applies on the next activation.
 
 ## Example payloads
 
@@ -166,17 +168,17 @@ POST /api/scenes
 ```
 
 ```json
-{"id": "red-wash", "preset_id": "red-wash-stripes", "sensitivity": 0.5}
+{"id": "red-wash", "preset_id": "red-wash-stripes"}
 ```
 
-Omit `sensitivity` to use `AudioConfig.default_sensitivity` (0.5). Omit `id` for a hex UUID. The preset's cue lists must be non-empty — the same rule `SceneController.activate` uses.
+Omit `id` for a hex UUID. The preset's cue lists must be non-empty — the same rule `SceneController.activate` uses. Schema 5 dropped per-scene sensitivity.
 
 Then activate with the existing control plane: `POST /api/show/activate` `{"id": "red-wash"}` or `{"t":"activate","id":"red-wash"}` on `/ws/show`.
 
 ## UI mapping (WS-11.2)
 
 The [frontend architecture](frontend_architecture.md) maps builder pages to these
-endpoints. Performance mode uses `/ws/show` only (plus `GET /api/scenes` for the grid).
+endpoints. Performance mode uses `/ws/show` (plus `GET /api/scenes` for the grid).
 
 | Builder page | Primary endpoints |
 | --- | --- |

@@ -36,6 +36,7 @@ been implemented; show-control core modules are Current — see
 
 ```text
 backend/
+├── main.py                  Operator server entry (`0.0.0.0:8800`)
 ├── config/
 │   └── config.py            Compile-time defaults; seeds LedfxConfig in AppConfig
 ├── ledfx/
@@ -45,15 +46,15 @@ backend/
 ├── logging_setup.py         File + stderr logging into data-folder logs/
 ├── authoring/
 │   └── service.py           Typed Library mutations (WS-10)
-├── models/                  Runtime pydantic models (11 files)
-│   ├── Scene.py             optional ilda_frame_list_id; sensitivity bounded 0–1
+├── models/                  Runtime pydantic models
+│   ├── Scene.py             optional ilda_frame_list_id (no per-scene sensitivity)
 │   ├── Preset.py            wled_preset_list_id → WLED_Preset_List
-│   ├── DMX_Preset_List.py   cue list + beats per entry
+│   ├── DMX_Preset_List.py   cue list + list-level beats
 │   ├── DMX_Preset.py
 │   ├── DMX_Device_Preset.py device_id + channel_values
 │   ├── DMX_Device.py        the patch: universe, start_address, channel_count
 │   ├── WLED_Preset.py       id = LEDfx scene name
-│   ├── WLED_Preset_List.py  cue list + beats per entry
+│   ├── WLED_Preset_List.py  cue list + list-level beats
 │   ├── ILDA_Frame_List.py
 │   ├── ILDA_Frame.py
 │   ├── Active_DMX_Channels.py
@@ -65,7 +66,10 @@ backend/
 │   ├── active.py            Universe buffer + look flattening by address
 │   ├── sequencer.py         CueSequencer: pure beat-driven state machine
 │   ├── outputs.py           DmxOutput / WledOutput behind one apply()
-│   └── scene_controller.py  Owns the active scene and both sequencers
+│   ├── scene_controller.py  Owns the active scene and both sequencers
+│   ├── sender.py            SenderThread, NullTransport, E131Transport
+│   └── e131.py              Hand-rolled E1.31 DATA framing
+├── server/                  FastAPI app, ShowEngine, control + authoring routes
 ├── seed_devices.py          Seeds the rig's patch into the library
 └── storage/
     ├── paths.py             Data-folder layout, platformdirs
@@ -77,7 +81,8 @@ backend/
     ├── config.py            AppConfig (dmx/ledfx/ilda/audio/ui)
     └── archive.py           Zip export/import with traversal guards
 
-tests/                       pytest suite: storage, sequencing, outputs, authoring (temp data root)
+frontend/                    Performance + Builder static UI (WS-11.2)
+tests/                       pytest suite (temp data root)
 pytest.ini                   pythonpath = backend
 ```
 
@@ -144,7 +149,6 @@ classDiagram
         +str id
         +str preset_id
         +str ilda_frame_list_id
-        +float sensitivity
     }
     class Preset {
         +str id
@@ -464,11 +468,11 @@ flowchart TD
     style D fill:#ffe6e6
 ```
 
-Steps shaded red do not exist. Today the chain resolves looks by patched address
-into one 512-value list, marks it dirty, and wakes
-[`runtime/sender.py`](../backend/runtime/sender.py), which calls `NullTransport`.
-Packet framing, sequence numbers, and UDP are implemented; cadence and unicast mode
-are decided ([D-017](decisions.md#d-017-sacn-unicast-versus-multicast),
+Steps shaded red on the *fixture-profile* lookup are still deferred (raw
+`channel_values` only). Packet framing, sequence numbers, and UDP are implemented
+in [`runtime/e131.py`](../backend/runtime/e131.py) / `E131Transport`; the default
+transport is still `NullTransport`. Cadence and unicast mode are decided
+([D-017](decisions.md#d-017-sacn-unicast-versus-multicast),
 [D-019](decisions.md#d-019-send-on-change--keepalive-cadence)). Details in
 [fixture_and_transport_strategy.md](fixture_and_transport_strategy.md).
 
@@ -512,7 +516,7 @@ flowchart TB
         c3["CueSequencer ×2<br/>independent"]
         c5["build_channels<br/>by patched address"]
         c6["one global 512 list"]
-        c7["SenderThread<br/>NullTransport"]
+        c7["SenderThread<br/>NullTransport default"]
         c8["LedFxClient<br/>activate_scene"]
         c9["(blob storage only)"]
         c2 --> c1 --> c3
@@ -521,9 +525,9 @@ flowchart TB
     end
 ```
 
-### 3.8 Target operator UI
+### 3.8 Operator UI
 
-**Planned (WS-11.2).** Static multi-page client in `frontend/`, served by FastAPI.
+**Current (WS-11.2).** Static multi-page client in `frontend/`, served by FastAPI.
 Two modes on the home page:
 
 - **Performance** — scene grid and beat indicator; activates via WebSocket `/ws/show`.
@@ -533,10 +537,9 @@ Two modes on the home page:
 Fixture channel semantics for the Builder editors come from transcribed profiles in
 `frontend/js/fixtures/`, sourced from [docs/fixtures/](fixtures/README.md). The
 intermediate lighting `Preset` (DMX list + WLED list pair) is hidden on the Scenes
-page.
+page. Latency readout is at `/diag/`.
 
-Full page map, acceptance criteria, and backend gaps:
-[frontend_architecture.md](frontend_architecture.md).
+Page map and remaining gaps: [frontend_architecture.md](frontend_architecture.md).
 
 ---
 
@@ -548,12 +551,11 @@ Full detail with severities in [audit_findings.md](audit_findings.md). Summary:
 | --- | --- | --- |
 | 1 | Single-universe buffer; `DMX_Device.universe` persisted but rejected beyond universe 1 | Blocks a second universe |
 | 2 | Beat duration is per cue *list*, not per entry | Every cue in a list holds for the same time |
-| 3 | No E1.31 packets | Symbolic `NullTransport` sender exists; the universe buffer still reaches no hardware |
+| 3 | E1.31 unverified on the physical box | Framing and `E131Transport` exist; default is `NullTransport`; no frame has reached the rig |
 | 4 | Model/record duplication with hand-written converters | Every field change requires multiple edits |
 | 5 | Module-global universe buffer, no locking | GIL-atomic whole-buffer swap is the torn-read mitigation; still not a lock |
 | 6 | No value-range validation on DMX channel values | Out-of-range values would reach the wire unclamped |
 | 7 | Capture death vs silence is not operator-visible | Looks hold (correct) but `/api/status` cannot tell a dead input from a quiet passage |
-| 8 | No app entry point, so nothing calls `configure_logging()` | Logging exists but only tests and scripts start it |
 
 Item 4 deserves nuance: separating the on-disk schema (`records.py`) from the
 runtime model (`models/`) is a *legitimate and deliberate* choice — it lets the

@@ -1,9 +1,9 @@
 # Frontend Architecture
 
-Plan for WS-11.2: the full operator UI in `frontend/`. The M1 page
-([`frontend/index.html`](../frontend/index.html)) is a scene picker plus latency harness;
-this document replaces it with two modes — **Performance** (run the show) and
-**Builder** (author the show graph).
+WS-11.2 operator UI in `frontend/`: two modes — **Performance** (run the show) and
+**Builder** (author the show graph). FastAPI serves the directory as static files
+with `html=True` ([`backend/server/app.py`](../backend/server/app.py)). The old M1
+scene picker is no longer the home page; its latency harness lives at `/diag/`.
 
 > **Terminology.** A "look" is a `dmx_preset` (`DMX_Preset`). Use `dmx_preset` going
 > forward — [D-023](decisions.md#d-023-a-look-is-a-dmx_preset).
@@ -12,7 +12,9 @@ Mutations go through the [authoring API](authoring.md). The UI is a thin client:
 parallel graph logic in JavaScript. Show activation stays on `/ws/show` and
 `/api/show/*`.
 
-**Status:** Planned — not implemented. Backend gaps listed in [§ Backend additions](#backend-additions).
+**Status:** **Done** as a no-build multi-page client. Remaining gaps are WS-9 operator
+health (BPM / level / silence vs dead capture) and two optional backend helpers
+listed in [§ Backend additions](#6-backend-additions).
 
 ---
 
@@ -24,16 +26,13 @@ parallel graph logic in JavaScript. Show activation stays on `/ws/show` and
 | **Builder** | Create device presets, looks, cue lists, and scenes | REST [authoring API](authoring.md) |
 
 The home landing page offers exactly two choices. Performance is the show surface;
-Builder is authoring. The M1 latency readout moves to a separate diagnostics page
-(see [§ Performance mode](#3-performance-mode)).
+Builder is authoring. Diag and About are linked from the top bar, not from home.
 
 ---
 
 ## 2. Routes and file layout
 
-FastAPI already serves `frontend/` as static files with `html=True`
-([`backend/server/app.py`](../backend/server/app.py)). WS-11.2 stays **no-build**
-(multi-page HTML + shared CSS/JS), matching M1.
+WS-11.2 is **no-build** (multi-page HTML + shared CSS/JS).
 
 | Path | Mode | Role |
 | --- | --- | --- |
@@ -45,9 +44,8 @@ FastAPI already serves `frontend/` as static files with `html=True`
 | `/builder/dmx-preset-lists/` | Builder | Ordered DMX cue list + beats |
 | `/builder/wled-preset-lists/` | Builder | Ordered WLED cue list + beats |
 | `/builder/scenes/` | Builder | Pair DMX + WLED lists into a scene |
-| `/diag/` | Ops | Latency harness (optional; moved from M1) |
-
-Proposed tree:
+| `/diag/` | Ops | Latency harness (moved from M1) |
+| `/about/` | Ops | Short operator notes |
 
 ```text
 frontend/
@@ -60,15 +58,19 @@ frontend/
 │   ├── dmx-preset-lists/index.html
 │   ├── wled-preset-lists/index.html
 │   └── scenes/index.html
-├── diag/index.html            # M1 latency readout (optional)
+├── diag/index.html
+├── about/index.html
 ├── css/app.css
-├── js/
-│   ├── api.js                 # Authoring REST client
-│   ├── show.js                # WebSocket control plane
-│   ├── drag-list.js           # Shared reorder UI
-│   └── fixtures/
-│       ├── chauvet_gigbar_2.js
-│       └── keobin_light_bar.js
+└── js/
+    ├── api.js                 # Authoring REST client
+    ├── show.js                # WebSocket control plane
+    ├── chrome.js              # Top bar, builder nav, delete confirm
+    ├── drag-list.js           # Shared reorder UI
+    ├── fixture-editor.js      # Section toggles ↔ channel_values
+    ├── pages/                 # One script per page
+    └── fixtures/
+        ├── chauvet_gigbar_2.js
+        └── keobin_light_bar.js
 ```
 
 Builder pages share one chrome: sidebar in **leaf-to-root order** (device presets →
@@ -84,18 +86,17 @@ looks → cue lists → scenes), matching the creation hierarchy in [authoring.m
 - Large tappable tiles labelled by scene `id` (human slug or short UUID).
 - Tap → `{"t":"activate","id":"<scene-id>"}` on `/ws/show`.
 - Active tile highlighted from server `state` events (`active_scene_id`, `is_active`).
-- Small **Deactivate** and **Blackout** controls (same WebSocket commands as M1).
+- **Deactivate**, **Blackout**, and a manual **Beat** tap (same WebSocket commands as M1).
+- Letter hotkeys map to tiles in list order.
 
 ### Beat indicator
 
-A bar across the top of the page flashes on each beat — the visual metronome.
+A bar across the top of the page flashes on each `{t:"beat"}` — manual tap or live
+audio. Performance flashes from that server event, not from a local key-up.
 
-- **Today:** the server pushes `{t:"beat"}` for both a manual tap and a detected
-  beat. Performance must flash from that event, not from a local key-up.
-- **Still missing:** BPM, level, and silence-versus-dead capture. Those are WS-9
-  remainder, not a second beat path.
-
-Do not put the M1 µs latency panel on this page; it distracts during a show.
+**Still missing (WS-9 remainder):** BPM, level, and silence-versus-dead capture on
+this page and on `/api/status`. Do not put the µs latency panel here; it lives at
+`/diag/`.
 
 ---
 
@@ -197,11 +198,12 @@ Same layout as DMX cue lists:
 
 - Name, beats per iteration, drag-and-drop order.
 - Palette from `GET /api/wled-presets` (each `id` is an LEDfx scene name — [D-018](decisions.md#d-018-ledfx-preset-identifier-form)).
+- Manual **Register** to add a name the poll has not seen yet.
 
 **Auto-update:** background [`LedFxSceneSync`](../backend/ledfx/scene_sync.py) upserts
-new scene names when `ledfx.enabled` is true (~25 s poll). The builder page should
-poll `GET /api/wled-presets` on an interval while open. Optional one-shot refresh via
-a future `POST /api/ledfx/refresh` (not implemented yet).
+new scene names when `ledfx.enabled` is true (~25 s poll). The WLED cue-list page
+polls `GET /api/wled-presets` on the same interval while open. Optional one-shot
+`POST /api/ledfx/refresh` is still not implemented.
 
 Names that disappear from LEDfx remain in the library if cue lists still reference them.
 
@@ -210,12 +212,13 @@ Names that disappear from LEDfx remain in the library if cue lists still referen
 - Name (`id` slug).
 - Dropdown **DMX preset list** — `GET /api/dmx-preset-lists`.
 - Dropdown **WLED preset list** — `GET /api/wled-preset-lists`.
-- Optional **sensitivity** (0.0–1.0; default from `AudioConfig.default_sensitivity`).
 
 On save:
 
-1. Find or create a `Preset` pairing the two list ids.
-2. `POST /api/scenes` with `{id, preset_id, sensitivity?}`.
+1. Find or create a `Preset` pairing the two list ids (client-side; no scene helper
+   endpoint).
+2. `POST /api/scenes` with `{id, preset_id}` (or `PUT` on edit). Schema 5 dropped
+   per-scene sensitivity; the page does not offer it.
 
 No ILDA field in v1. Test the scene in Performance mode after saving.
 
@@ -227,24 +230,25 @@ No ILDA field in v1. Test the scene in Performance mode after saving.
 | --- | --- |
 | `api.js` | Fetch wrappers, `{error: {code, message}}` handling, list CRUD |
 | `show.js` | WebSocket connect/reconnect, `state` / `ack` / `beat` handlers |
+| `chrome.js` | Top bar, builder sidebar, banners, delete-plan confirm |
 | `drag-list.js` | Reorder cue entries; PUT merged `*_ids` + `beats` |
-| `fixtures/*.js` | Section UI ↔ `channel_values[]` encode/decode |
+| `fixture-editor.js` | Section UI ↔ `channel_values[]` encode/decode |
+| `fixtures/*.js` | Per-model channel tables transcribed from [docs/fixtures/](fixtures/README.md) |
+| `pages/*.js` | One page script each |
 
-**Performance** uses mostly `show.js`. **Builder** uses `api.js` plus fixture
-profiles on the two device pages.
+**Performance** uses `show.js`. **Builder** uses `api.js` plus fixture profiles on
+the two device pages.
 
 ---
 
 ## 6. Backend additions
 
-Small server changes to support the UI as designed:
-
 | Item | Why | Status |
 | --- | --- | --- |
 | `{t:"beat"}` on `/ws/show` | Beat indicator must flash for live audio as well as a tap | **Done** — show thread emits `beat` for every `ShowCommand(BEAT)` |
-| `POST /api/ledfx/refresh` | One-shot scene sync for WLED list builder | Not implemented |
-| Scene save helper (optional) | `POST /api/scenes` accepting `dmx_preset_list_id` + `wled_preset_list_id` without exposing `Preset` ids | Not implemented |
-| Fixture profiles in `frontend/js/fixtures/` | Transcribe [docs/fixtures/](fixtures/README.md) for editor UI; storage unchanged | Not implemented |
+| Fixture profiles in `frontend/js/fixtures/` | Transcribe [docs/fixtures/](fixtures/README.md) for editor UI; storage unchanged | **Done** |
+| `POST /api/ledfx/refresh` | One-shot scene sync for WLED list builder | Not implemented — 25 s palette poll covers the common case |
+| Scene save helper (optional) | `POST /api/scenes` accepting `dmx_preset_list_id` + `wled_preset_list_id` without exposing `Preset` ids | Not implemented — Scenes page finds or creates the `Preset` in JS |
 
 **Non-goals for v1:**
 
@@ -255,16 +259,16 @@ Small server changes to support the UI as designed:
 
 ---
 
-## 7. Implementation order
+## 7. Implementation order (landed)
 
-1. **Shell** — home, builder nav, shared `api.js` / `app.css`; retire M1 as home.
+1. **Shell** — home, builder nav, shared `api.js` / `app.css`; M1 retired as home.
 2. **Fixture profiles + device editors** — GigBAR and Keobin pages.
 3. **dmx_presets** — two dropdowns.
 4. **Cue list pages** — shared drag-and-drop + beats (DMX and WLED).
 5. **Scenes** — hidden `Preset` pairing.
-6. **Performance** — scene grid + beat flash (needs `{t:"beat"}` for full behaviour).
-7. **Diagnostics** — move M1 latency harness to `/diag/` if still needed. Budget:
-   p99 ≤ 13 ms from scene selection to sender (`LATENCY_BUDGET_US` = 13 000 µs).
+6. **Performance** — scene grid + beat flash.
+7. **Diagnostics** — M1 latency harness at `/diag/`. Budget: p99 ≤ 13 ms from scene
+   selection to sender (`LATENCY_BUDGET_US` = 13 000 µs).
 
 ---
 

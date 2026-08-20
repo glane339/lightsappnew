@@ -237,9 +237,9 @@ way tests construct a `Library`.
 
 **Dependencies.** None. Should start immediately and precede phase 2.
 
-**Status.** **Substantially done** — 84 tests covering storage, migrations, DMX
-devices, sequencer, scene controller, and outputs. LEDfx client/sync still uncovered.
-App entry point and end-to-end in-process integration remain future work.
+**Status.** **Substantially done** — 211 tests covering storage, migrations, DMX
+devices, sequencer, scene controller, outputs, sender, E1.31 bytes, server, and
+authoring. LEDfx client/sync still uncovered as a dedicated suite.
 
 ---
 
@@ -295,8 +295,9 @@ authoring service ([WS-10.5](current_sprint.md#105-authoring-service-owner)).
 **Dependencies.** Phases 2, 3.
 
 **Status.** **Done** — tracked as WS-10 in [current_sprint.md](current_sprint.md);
-contract in [authoring.md](authoring.md). Full authoring UI remains phase 8 / WS-11.2;
-page plan in [frontend_architecture.md](frontend_architecture.md).
+contract in [authoring.md](authoring.md). Authoring UI is phase 8 / WS-11.2
+([frontend_architecture.md](frontend_architecture.md)) — pages landed; remaining
+phase-8 work is operator health (BPM, capture death, output reachability).
 
 ---
 
@@ -330,6 +331,11 @@ Performance). No remote or mobile control. No multi-user.
 manually-driven one-room show is small; keep it small.
 
 **Dependencies.** Phases 4, 5, 7; phase 7a for authoring UI ([WS-11](current_sprint.md#ws-11--frontend-and-http-server)).
+
+**Status.** **Partly done** — Performance + Builder pages, beat flash, blackout, and
+cascade-confirm deletes landed ([frontend_architecture.md](frontend_architecture.md)).
+Remaining exit criteria: BPM / level / silence-vs-dead capture, DMX and LEDfx
+reachability on the show surface.
 
 **Checkpoint.** This is the natural point to re-evaluate
 [D-010](decisions.md#d-010-basement-reliability-outranks-generality). If the system
