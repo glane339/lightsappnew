@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Request
 from pydantic import BaseModel
@@ -45,6 +45,7 @@ class StatusResponse(BaseModel):
     audio: AudioHealth
     last_error: Optional[str] = None
     latency: Dict[str, int]
+    detected_beat_timing: Dict[str, Any]
 
 
 @router.get("/health")
@@ -104,4 +105,5 @@ def get_status(request: Request, engine: EngineDep) -> StatusResponse:
         audio=_audio_health(request),
         last_error=engine.last_error,
         latency=engine.latency.summary(),
+        detected_beat_timing=engine.detected_beat_timing.snapshot(),
     )

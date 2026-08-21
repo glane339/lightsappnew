@@ -12,6 +12,7 @@ import asyncio
 import logging
 import time
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from pathlib import Path
 from typing import AsyncIterator, Optional
 
@@ -22,6 +23,7 @@ from authoring.service import AuthoringService
 from audio.audio_engine_source import AudioEngineBeatSource
 from server.commands import CommandKind, ShowCommand
 from server.commands import ShowEvent
+from server.beat_timing import DetectedBeatTiming
 from server.engine import ShowBusyError, ShowEngine
 from server.errors import register_exception_handlers
 from server.routes.authoring import router as authoring_router
@@ -44,12 +46,25 @@ FRONTEND_DIR = Path(__file__).resolve().parents[2] / "frontend"
 EVENT_QUEUE_MAX = 256
 
 
-def _submit_detected_beat(engine: ShowEngine) -> None:
+def _submit_detected_beat(
+    engine: ShowEngine, timing: DetectedBeatTiming | None = None
+) -> None:
     """Bridge one detected beat to the show thread without blocking audio capture."""
 
+    submitted_ns = time.perf_counter_ns()
+    if timing is not None:
+        timing = replace(timing, command_submitted_ns=submitted_ns)
     try:
-        engine.submit(ShowCommand(kind=CommandKind.BEAT, received_ns=time.perf_counter_ns()))
+        engine.submit(
+            ShowCommand(
+                kind=CommandKind.BEAT,
+                received_ns=submitted_ns,
+                detected_beat_timing=timing,
+            )
+        )
     except ShowBusyError:
+        if timing is not None:
+            engine.detected_beat_timing.record_drop(timing)
         logger.warning("dropped detected beat because the show command queue is full")
 
 
@@ -123,7 +138,7 @@ def create_app(
     audio_selector = _resolve_input_device(app_config.audio.input_device)
     audio_source = _build_audio_source(audio_selector) if audio_selector is not None else None
     if audio_source is not None:
-        audio_source.subscribe(lambda: _submit_detected_beat(engine))
+        audio_source.subscribe(lambda timing: _submit_detected_beat(engine, timing))
     events: "asyncio.Queue[ShowEvent]" = asyncio.Queue(maxsize=EVENT_QUEUE_MAX)
 
     @asynccontextmanager

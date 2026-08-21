@@ -9,6 +9,7 @@ crossfade, and no layering.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from typing import List, Optional, Tuple
 
 from runtime.outputs import CueOutput
@@ -90,7 +91,7 @@ class SceneController:
         self._dmx = None
         self._wled = None
 
-    def on_beat(self) -> None:
+    def on_beat(self, on_action: Callable[[], None] | None = None) -> bool:
         """
         Advance both cue lists one beat, applying only the ones that changed.
 
@@ -99,11 +100,16 @@ class SceneController:
         means a slow LEDfx delays the next beat rather than this beat's lighting.
         """
         if self._dmx is None or self._wled is None:
-            return
+            return False
+        acted = False
         for sequencer, output in ((self._dmx, self._dmx_output), (self._wled, self._wled_output)):
             changed = sequencer.on_beat()
             if changed is not None:
+                if not acted and on_action is not None:
+                    on_action()
+                acted = True
                 output.apply(changed)
+        return acted
 
     def _resolve(self, scene_id: str) -> Tuple[List[str], int, List[str], int]:
         """Walk scene → preset → both cue lists, rejecting anything unplayable."""

@@ -16,6 +16,7 @@ import queue
 import sys
 import threading
 import time
+from dataclasses import replace
 from typing import Any, Dict, Optional, Tuple
 
 from authoring.service import AuthoringService
@@ -26,6 +27,7 @@ from runtime.outputs import AsyncCueOutput, DmxOutput, WledOutput
 from runtime.scene_controller import SceneController
 from runtime.sender import DmxTransport, SenderThread, build_transport
 from server.commands import CommandKind, ShowCommand, ShowEvent, ShowState
+from server.beat_timing import DetectedBeatTimingTracker
 from server.latency import LatencyTracker
 from storage.config import AppConfig
 from storage.json_store import StorageError
@@ -85,6 +87,7 @@ class ShowEngine:
         self._commands: "queue.Queue[Optional[ShowCommand]]" = queue.Queue(maxsize=COMMAND_QUEUE_MAX)
         self._wled_cues: "queue.Queue[str]" = queue.Queue(maxsize=WLED_QUEUE_MAX)
         self._latency = LatencyTracker()
+        self._detected_beat_timing = DetectedBeatTimingTracker()
 
         self._transport = transport if transport is not None else build_transport(config.dmx)
         self._authoring = authoring if authoring is not None else AuthoringService(library)
@@ -124,6 +127,11 @@ class ShowEngine:
     @property
     def latency(self) -> LatencyTracker:
         return self._latency
+
+    @property
+    def detected_beat_timing(self) -> DetectedBeatTimingTracker:
+        """Bounded diagnostic timing for automatically detected beats only."""
+        return self._detected_beat_timing
 
     @property
     def transport(self) -> DmxTransport:
@@ -268,6 +276,15 @@ class ShowEngine:
                 logger.exception("show thread survived a failure handling %s", command.kind)
 
     def _handle(self, command: ShowCommand) -> None:
+        timing = command.detected_beat_timing
+        if timing is not None:
+            timing = replace(timing, command_processed_ns=time.perf_counter_ns())
+        beat_action_ns: int | None = None
+
+        def on_beat_action() -> None:
+            nonlocal beat_action_ns
+            beat_action_ns = time.perf_counter_ns()
+
         frames_before = self._universe.publish_count()
         # Queued before the work, because publishing wakes the sender immediately and it
         # may finish the ack before this method returns.
@@ -276,19 +293,28 @@ class ShowEngine:
         # Nothing a command can do may kill this thread: the show thread dying is the
         # whole rig going unresponsive, which is worse than any single bad command.
         try:
-            self._dispatch(command)
+            self._dispatch(command, on_beat_action=on_beat_action if timing is not None else None)
         except KeyError as exc:
             # Library.get raises KeyError for an id that is not in the collection.
             missing = exc.args[0] if exc.args else "?"
             self._reject(command, f"cannot {command.kind.value}: no record with id {missing!r}")
+            if timing is not None:
+                self._detected_beat_timing.record(timing)
             return
         except StorageError as exc:
             self._reject(command, str(exc))
+            if timing is not None:
+                self._detected_beat_timing.record(timing)
             return
         except Exception as exc:  # pragma: no cover - guards against unforeseen failures
             logger.exception("unhandled failure running %s", command.kind.value)
             self._reject(command, f"{type(exc).__name__}: {exc}", warn=False)
+            if timing is not None:
+                self._detected_beat_timing.record(timing)
             return
+
+        if timing is not None:
+            self._detected_beat_timing.record(replace(timing, beat_action_ns=beat_action_ns))
 
         self._last_error = None
         if command.kind is CommandKind.BEAT:
@@ -303,7 +329,7 @@ class ShowEngine:
 
         self._emit_state()
 
-    def _dispatch(self, command: ShowCommand) -> None:
+    def _dispatch(self, command: ShowCommand, *, on_beat_action=None) -> None:
         if command.kind is CommandKind.ACTIVATE:
             if not command.scene_id:
                 raise StorageError("activate requires a scene id")
@@ -316,7 +342,7 @@ class ShowEngine:
             self._controller.deactivate()
             self._dmx_output.blackout()
         elif command.kind is CommandKind.BEAT:
-            self._controller.on_beat()
+            self._controller.on_beat(on_beat_action)
         else:  # pragma: no cover - CommandKind is closed
             raise StorageError(f"unknown command {command.kind!r}")
 

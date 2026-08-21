@@ -12,6 +12,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Dict, Optional
 
+from server.beat_timing import DetectedBeatTiming
+
 
 class CommandKind(str, Enum):
     ACTIVATE = "activate"
@@ -34,6 +36,7 @@ class ShowCommand:
     received_ns: int
     scene_id: Optional[str] = None
     ack_id: Optional[str] = None
+    detected_beat_timing: Optional[DetectedBeatTiming] = None
 
 
 @dataclass(frozen=True)
