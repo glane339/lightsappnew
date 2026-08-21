@@ -13,6 +13,9 @@ from conftest import build_cycling_scene_graph
 from fastapi.testclient import TestClient
 from server.commands import CommandKind
 from server.engine import ShowBusyError
+from server.commands import ShowCommand
+from server.engine import ShowEngine
+from server.beat_timing import DetectedBeatTiming
 from storage.config import AppConfig, AudioConfig
 from storage.library import Library
 
@@ -82,6 +85,106 @@ def test_detected_beat_bridge_submits_one_show_command_with_receipt_clock() -> N
     assert len(engine.commands) == 1
     assert engine.commands[0].kind is CommandKind.BEAT
     assert engine.commands[0].received_ns >= before
+
+
+def test_detected_beat_bridge_preserves_adapter_timestamp_and_submission_boundary(monkeypatch) -> None:
+    """The bridge must carry the adapter boundary instead of restamping the beat source."""
+    from server.app import _submit_detected_beat
+
+    class RecordingEngine:
+        def __init__(self) -> None:
+            self.commands = []
+
+        def submit(self, command: object) -> None:
+            self.commands.append(command)
+
+    monkeypatch.setattr("server.app.time.perf_counter_ns", lambda: 120)
+    engine = RecordingEngine()
+    _submit_detected_beat(engine, DetectedBeatTiming(100))
+
+    timing = engine.commands[0].detected_beat_timing
+    assert timing.detected_beat_published_ns == 100
+    assert timing.command_submitted_ns == 120
+
+
+def test_detected_beat_queue_full_records_a_drop(monkeypatch) -> None:
+    """Queue saturation must be measurable without turning into an audio-thread failure."""
+    from server.app import _submit_detected_beat
+
+    class BusyEngine:
+        def __init__(self) -> None:
+            from server.beat_timing import DetectedBeatTimingTracker
+
+            self.detected_beat_timing = DetectedBeatTimingTracker()
+
+        def submit(self, command: object) -> None:
+            raise ShowBusyError("full")
+
+    monkeypatch.setattr("server.app.time.perf_counter_ns", lambda: 120)
+    engine = BusyEngine()
+    _submit_detected_beat(engine, DetectedBeatTiming(100))
+
+    assert engine.detected_beat_timing.snapshot()["latest"]["outcome"] == "dropped_queue_full"
+
+
+def test_show_engine_records_processing_and_action_boundaries(data_root, monkeypatch) -> None:
+    """A detected beat that changes a cue must retain every observed boundary."""
+    engine = ShowEngine(Library.open(data_root, sync_ilda=False), AppConfig())
+
+    class ActionController:
+        def on_beat(self, on_action) -> bool:
+            on_action()
+            return True
+
+    engine._controller = ActionController()
+    engine._emit_state = lambda: None
+    ticks = iter((150, 180))
+    monkeypatch.setattr("server.engine.time.perf_counter_ns", lambda: next(ticks))
+    engine._handle(
+        ShowCommand(
+            kind=CommandKind.BEAT,
+            received_ns=120,
+            detected_beat_timing=DetectedBeatTiming(100, 120),
+        )
+    )
+
+    assert engine.detected_beat_timing.snapshot()["latest"] == {
+        "detected_beat_published_ns": 100,
+        "command_submitted_ns": 120,
+        "command_processed_ns": 150,
+        "beat_action_ns": 180,
+        "publish_to_submit_ns": 20,
+        "submit_to_process_ns": 30,
+        "publish_to_process_ns": 50,
+        "process_to_action_ns": 30,
+        "publish_to_action_ns": 80,
+        "outcome": "processed",
+    }
+
+
+def test_show_engine_omits_action_timing_when_a_detected_beat_changes_nothing(data_root, monkeypatch) -> None:
+    """A beat between cue boundaries must not claim an action timestamp."""
+    engine = ShowEngine(Library.open(data_root, sync_ilda=False), AppConfig())
+
+    class IdleController:
+        def on_beat(self, on_action) -> bool:
+            return False
+
+    engine._controller = IdleController()
+    engine._emit_state = lambda: None
+    monkeypatch.setattr("server.engine.time.perf_counter_ns", lambda: 150)
+    engine._handle(
+        ShowCommand(
+            kind=CommandKind.BEAT,
+            received_ns=120,
+            detected_beat_timing=DetectedBeatTiming(100, 120),
+        )
+    )
+
+    latest = engine.detected_beat_timing.snapshot()["latest"]
+    assert latest["command_processed_ns"] == 150
+    assert latest["beat_action_ns"] is None
+    assert "process_to_action_ns" not in latest
 
 
 def test_detected_beat_queue_overflow_is_dropped_without_affecting_manual_source() -> None:

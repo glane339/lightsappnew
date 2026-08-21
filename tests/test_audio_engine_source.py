@@ -63,7 +63,7 @@ def test_adapter_tracks_bpm_count_and_event_order() -> None:
 
     adapter = AudioEngineBeatSource(source, object(), runner=runner)
     received: list[int] = []
-    adapter.subscribe(lambda: received.append(adapter.beat_count))
+    adapter.subscribe(lambda _timing: received.append(adapter.beat_count))
 
     adapter.start()
     assert _wait_for(lambda: adapter.beat_count == 3)
@@ -73,6 +73,23 @@ def test_adapter_tracks_bpm_count_and_event_order() -> None:
     assert received == [1, 2, 3]
     assert source.closed is True
     assert adapter.health()["capture"] == "off"
+
+
+def test_adapter_publishes_a_monotonic_timestamp_with_each_detected_beat(monkeypatch) -> None:
+    """Dropping the adapter-publish boundary would sever detected-beat correlation."""
+    source = FakeSource()
+
+    def runner(_source: object, _engine: object) -> Iterator[FakeResult]:
+        yield FakeResult(120.0, (FakeBeat(1.0),))
+
+    adapter = AudioEngineBeatSource(source, object(), runner=runner)
+    received = []
+    adapter.subscribe(received.append)
+    monkeypatch.setattr("audio.audio_engine_source.time.perf_counter_ns", lambda: 123)
+
+    adapter._run()
+
+    assert received[0].detected_beat_published_ns == 123
 
 
 def test_adapter_catches_worker_failures_and_stop_is_idempotent() -> None:

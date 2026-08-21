@@ -90,6 +90,19 @@ def test_status_reports_audio_and_reachability(client: TestClient) -> None:
     assert status["last_error"] is None
 
 
+def test_status_serializes_detected_beat_software_timing(client: TestClient) -> None:
+    """Operators need a labeled diagnostic snapshot, not an implicit internal counter."""
+    from server.beat_timing import DetectedBeatTiming
+
+    client.app.state.engine.detected_beat_timing.record(
+        DetectedBeatTiming(100, 120, 150, 180)
+    )
+
+    timing = client.get("/api/status").json()["detected_beat_timing"]
+    assert timing["measurement"] == "software_path_only"
+    assert timing["latest"]["publish_to_action_ns"] == 80
+
+
 def test_shutdown_is_a_noop_without_a_callback(client: TestClient) -> None:
     response = client.post("/api/shutdown")
 

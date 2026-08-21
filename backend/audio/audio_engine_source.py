@@ -9,6 +9,7 @@ from collections.abc import Callable, Iterable
 from typing import Any, Optional
 
 from audio.beat_source import BeatCallback
+from server.beat_timing import DetectedBeatTiming
 
 logger = logging.getLogger(__name__)
 
@@ -134,7 +135,11 @@ class AudioEngineBeatSource:
                         subscribers = tuple(self._subscribers)
                     for callback in subscribers:
                         try:
-                            callback()
+                            callback(
+                                DetectedBeatTiming(
+                                    detected_beat_published_ns=time.perf_counter_ns()
+                                )
+                            )
                         except Exception:
                             logger.exception("beat subscriber failed")
         except Exception:

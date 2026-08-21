@@ -17,7 +17,9 @@ from typing import Callable, List, Optional, Protocol
 
 logger = logging.getLogger(__name__)
 
-BeatCallback = Callable[[], None]
+# Detected sources provide immutable beat metadata; manual sources retain their no-argument
+# callback behavior so existing manual callers stay compatible.
+BeatCallback = Callable[..., None]
 
 
 class BeatSource(Protocol):
