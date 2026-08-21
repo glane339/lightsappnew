@@ -1,21 +1,19 @@
 from __future__ import annotations
 
+import logging
 import sys
 import threading
 import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from types import ModuleType
-from typing import Optional
 
 from audio.beat_source import ManualBeatSource
 from conftest import build_cycling_scene_graph
 from fastapi.testclient import TestClient
-from server.commands import CommandKind
-from server.engine import ShowBusyError
-from server.commands import ShowCommand
-from server.engine import ShowEngine
 from server.beat_timing import DetectedBeatTiming
+from server.commands import CommandKind, ShowCommand
+from server.engine import ShowBusyError, ShowEngine
 from storage.config import AppConfig, AudioConfig
 from storage.library import Library
 
@@ -29,7 +27,7 @@ class FakeBeat:
 
 @dataclass(frozen=True)
 class FakeResult:
-    bpm: Optional[float]
+    bpm: float | None
     beat_events: tuple[FakeBeat, ...]
 
 
@@ -66,6 +64,18 @@ def _install_fake_audio(
     capture.run_engine = runner
     monkeypatch.setitem(sys.modules, "lights_audio_engine", audio_engine)
     monkeypatch.setitem(sys.modules, "lights_audio_engine.capture", capture)
+
+
+def _install_fake_sounddevice(
+    monkeypatch: object,
+    *,
+    query_devices: Callable[[object, str], object],
+    query_hostapis: Callable[[int], object],
+) -> None:
+    sounddevice = ModuleType("sounddevice")
+    sounddevice.query_devices = query_devices
+    sounddevice.query_hostapis = query_hostapis
+    monkeypatch.setitem(sys.modules, "sounddevice", sounddevice)
 
 
 def test_detected_beat_bridge_submits_one_show_command_with_receipt_clock() -> None:
@@ -205,10 +215,41 @@ def test_detected_beat_queue_overflow_is_dropped_without_affecting_manual_source
     assert received == [None]
 
 
-def test_resolve_input_device_prefers_configured_and_rejects_blank() -> None:
+def test_resolve_input_device_resolves_unique_name_to_index_and_logs_identity(
+    monkeypatch, caplog
+) -> None:
     from server.app import _resolve_input_device
 
-    assert _resolve_input_device("Loopback") == "Loopback"
+    requested = "Microphone (Realtek(R) Audio), Windows WASAPI"
+
+    def query_devices(selector: object, kind: str) -> object:
+        assert selector == requested
+        assert kind == "input"
+        return {"index": 12, "name": "Microphone (Realtek(R) Audio)", "hostapi": 2}
+
+    _install_fake_sounddevice(
+        monkeypatch,
+        query_devices=query_devices,
+        query_hostapis=lambda index: {"name": "Windows WASAPI"},
+    )
+
+    with caplog.at_level(logging.INFO, logger="server.app"):
+        resolved = _resolve_input_device(requested)
+
+    assert resolved == 12
+    assert requested in caplog.text
+    assert "[12] Microphone (Realtek(R) Audio)" in caplog.text
+    assert "Windows WASAPI" in caplog.text
+
+
+def test_resolve_input_device_rejects_blank_without_using_default(monkeypatch) -> None:
+    from server.app import _resolve_input_device
+
+    monkeypatch.setattr(
+        "server.app._default_input_device_selector",
+        lambda: (_ for _ in ()).throw(AssertionError("default must not be used")),
+    )
+
     assert _resolve_input_device("") is None
     assert _resolve_input_device("   ") is None
 
@@ -217,7 +258,86 @@ def test_resolve_input_device_uses_host_default_when_unset(monkeypatch) -> None:
     from server.app import _resolve_input_device
 
     monkeypatch.setattr("server.app._default_input_device_selector", lambda: 4)
+
+    def query_devices(selector: object, kind: str) -> object:
+        assert selector == 4
+        assert kind == "input"
+        return {"index": 4, "name": "Default microphone", "hostapi": 1}
+
+    _install_fake_sounddevice(
+        monkeypatch,
+        query_devices=query_devices,
+        query_hostapis=lambda index: {"name": "MME"},
+    )
+
     assert _resolve_input_device(None) == 4
+
+
+def test_numeric_string_selector_is_not_treated_as_device_index(monkeypatch, caplog) -> None:
+    from server.app import _resolve_input_device
+
+    monkeypatch.setattr(
+        "server.app._default_input_device_selector",
+        lambda: (_ for _ in ()).throw(AssertionError("default must not be used")),
+    )
+
+    def query_devices(selector: object, kind: str) -> object:
+        assert selector == "12"
+        assert kind == "input"
+        raise ValueError("No input device matching '12'")
+
+    _install_fake_sounddevice(
+        monkeypatch,
+        query_devices=query_devices,
+        query_hostapis=lambda index: {"name": "unused"},
+    )
+
+    with caplog.at_level(logging.ERROR, logger="server.app"):
+        resolved = _resolve_input_device("12")
+
+    assert resolved is None
+    assert "explicit audio input selector '12' could not be resolved" in caplog.text
+
+
+def test_ambiguous_explicit_selector_fails_closed_without_building_audio_source(
+    data_root, monkeypatch, caplog
+) -> None:
+    from server.app import create_app
+
+    monkeypatch.setattr(
+        "server.app._default_input_device_selector",
+        lambda: (_ for _ in ()).throw(AssertionError("default must not be used")),
+    )
+
+    def query_devices(selector: object, kind: str) -> object:
+        assert selector == "Microphone (Realtek(R) Audio)"
+        assert kind == "input"
+        raise ValueError("Multiple input devices found")
+
+    _install_fake_sounddevice(
+        monkeypatch,
+        query_devices=query_devices,
+        query_hostapis=lambda index: {"name": "unused"},
+    )
+
+    with caplog.at_level(logging.ERROR, logger="server.app"):
+        app = create_app(
+            AppConfig(audio=AudioConfig(input_device="Microphone (Realtek(R) Audio)")),
+            data_root=data_root,
+        )
+
+    assert app.state.audio_source is None
+    assert "could not be resolved" in caplog.text
+
+
+def test_create_app_logs_effective_data_root_and_config_path(data_root, caplog) -> None:
+    from server.app import create_app
+
+    with caplog.at_level(logging.INFO, logger="server.app"):
+        create_app(AppConfig(), data_root=data_root)
+
+    assert f"application data root: {data_root}" in caplog.text
+    assert f"config path: {data_root / 'config.json'}" in caplog.text
 
 
 def test_invalid_configured_audio_selector_leaves_manual_show_beat_available(
@@ -256,7 +376,16 @@ def test_audio_engine_starts_on_app_startup(data_root, monkeypatch) -> None:
         source.wait_closed()
         yield from ()
 
-    monkeypatch.setattr("server.app._default_input_device_selector", lambda: "default-mic")
+    monkeypatch.setattr("server.app._default_input_device_selector", lambda: 4)
+    _install_fake_sounddevice(
+        monkeypatch,
+        query_devices=lambda selector, kind: {
+            "index": 4,
+            "name": "Default microphone",
+            "hostapi": 1,
+        },
+        query_hostapis=lambda index: {"name": "Test host API"},
+    )
     _install_fake_audio(monkeypatch, HoldingCapture, runner)
 
     app = create_app(AppConfig(), data_root=data_root)
@@ -290,6 +419,15 @@ def test_detected_beats_advance_look_cycling(data_root, monkeypatch) -> None:
         yield FakeResult(120.0, (FakeBeat(0.0), FakeBeat(0.5)))
         source.wait_closed()
 
+    _install_fake_sounddevice(
+        monkeypatch,
+        query_devices=lambda selector, kind: {
+            "index": 8,
+            "name": "Test microphone",
+            "hostapi": 1,
+        },
+        query_hostapis=lambda index: {"name": "Test host API"},
+    )
     _install_fake_audio(monkeypatch, GatedCapture, runner)
 
     app = create_app(
