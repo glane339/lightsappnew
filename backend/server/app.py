@@ -11,19 +11,17 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import replace
 from pathlib import Path
-from typing import AsyncIterator, Optional
 
+from audio.audio_engine_source import AudioEngineBeatSource
+from authoring.service import AuthoringService
 from fastapi import FastAPI, WebSocket
 from fastapi.staticfiles import StaticFiles
-
-from authoring.service import AuthoringService
-from audio.audio_engine_source import AudioEngineBeatSource
-from server.commands import CommandKind, ShowCommand
-from server.commands import ShowEvent
 from server.beat_timing import DetectedBeatTiming
+from server.commands import CommandKind, ShowCommand, ShowEvent
 from server.engine import ShowBusyError, ShowEngine
 from server.errors import register_exception_handlers
 from server.routes.authoring import router as authoring_router
@@ -35,7 +33,7 @@ from server.routes.status import router as status_router
 from server.ws import handle_show_socket
 from storage.config import AppConfig, ensure_config
 from storage.library import Library
-from storage.paths import ensure_layout
+from storage.paths import config_path, ensure_layout
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +66,7 @@ def _submit_detected_beat(
         logger.warning("dropped detected beat because the show command queue is full")
 
 
-def _default_input_device_selector() -> int | str | None:
+def _default_input_device_selector() -> int | None:
     """PortAudio's default input, used when ``AudioConfig.input_device`` is unset."""
 
     try:
@@ -84,23 +82,67 @@ def _default_input_device_selector() -> int | str | None:
     if isinstance(default_in, bool) or not isinstance(default_in, int) or default_in < 0:
         logger.warning("PortAudio reports no default input device")
         return None
-    try:
-        info = sd.query_devices(default_in)
-        name = info["name"] if isinstance(info, dict) else getattr(info, "name", default_in)
-        logger.info("using PortAudio default input [%s] %s", default_in, name)
-    except Exception:
-        logger.info("using PortAudio default input [%s]", default_in)
     return default_in
 
 
-def _resolve_input_device(configured: Optional[str]) -> int | str | None:
-    """Prefer an explicit config selector; otherwise take the host default input."""
+def _resolve_input_device(configured: str | None) -> int | None:
+    """Resolve one input before capture starts; explicit failures never fall back."""
 
     if configured is not None:
-        if not configured.strip():
+        selector = configured.strip()
+        if not selector:
+            logger.error("live detected audio disabled: explicit audio input selector is blank")
             return None
-        return configured
-    return _default_input_device_selector()
+        requested = repr(configured)
+    else:
+        selector = _default_input_device_selector()
+        if selector is None:
+            return None
+        requested = "PortAudio default"
+
+    try:
+        import sounddevice as sd
+    except ImportError:
+        logger.exception("live audio input cannot be resolved: sounddevice is not installed")
+        return None
+
+    try:
+        info = sd.query_devices(selector, "input")
+        if not isinstance(info, Mapping):
+            raise TypeError("PortAudio returned malformed device information")
+        index = info["index"]
+        host_api_index = info["hostapi"]
+        if isinstance(index, bool) or not isinstance(index, int) or index < 0:
+            raise TypeError("PortAudio returned an invalid device index")
+        if isinstance(host_api_index, bool) or not isinstance(host_api_index, int):
+            raise TypeError("PortAudio returned an invalid host API index")
+        name = str(info["name"])
+        host_api = sd.query_hostapis(host_api_index)
+        if not isinstance(host_api, Mapping):
+            raise TypeError("PortAudio returned malformed host API information")
+        host_api_name = str(host_api["name"])
+    except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError) as exc:
+        if configured is not None:
+            logger.error(
+                "live detected audio disabled: explicit audio input selector %s could not be "
+                "resolved uniquely: %s",
+                requested,
+                exc,
+            )
+        else:
+            logger.error(
+                "live detected audio disabled: default input could not be resolved: %s", exc
+            )
+        return None
+
+    logger.info(
+        "selected audio input: requested=%s, resolved=[%d] %s, host API=%s",
+        requested,
+        index,
+        name,
+        host_api_name,
+    )
+    return index
 
 
 def _build_audio_source(input_device: int | str) -> AudioEngineBeatSource | None:
@@ -125,12 +167,17 @@ def _build_audio_source(input_device: int | str) -> AudioEngineBeatSource | None
 
 
 def create_app(
-    config: Optional[AppConfig] = None,
+    config: AppConfig | None = None,
     *,
-    data_root: Optional[Path] = None,
-    frontend_dir: Optional[Path] = None,
+    data_root: Path | None = None,
+    frontend_dir: Path | None = None,
 ) -> FastAPI:
     resolved_root = ensure_layout(data_root)
+    logger.info(
+        "application data root: %s; config path: %s",
+        resolved_root,
+        config_path(resolved_root),
+    )
     app_config = config if config is not None else ensure_config(resolved_root)
     library = Library.open(resolved_root, sync_ilda=False)
     authoring = AuthoringService(library)
@@ -139,7 +186,7 @@ def create_app(
     audio_source = _build_audio_source(audio_selector) if audio_selector is not None else None
     if audio_source is not None:
         audio_source.subscribe(lambda timing: _submit_detected_beat(engine, timing))
-    events: "asyncio.Queue[ShowEvent]" = asyncio.Queue(maxsize=EVENT_QUEUE_MAX)
+    events: asyncio.Queue[ShowEvent] = asyncio.Queue(maxsize=EVENT_QUEUE_MAX)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
