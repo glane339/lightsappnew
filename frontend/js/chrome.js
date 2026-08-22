@@ -2,12 +2,12 @@
 
 (function (global) {
   var BUILDER_NAV = [
-    { href: "/builder/gigbar2/", id: "gigbar2", group: "Device presets", label: "GigBAR 2" },
-    { href: "/builder/keobin/", id: "keobin", group: "Device presets", label: "Keobin" },
-    { href: "/builder/dmx-presets/", id: "dmx-presets", group: "dmx_presets", label: "Pair" },
-    { href: "/builder/dmx-preset-lists/", id: "dmx-preset-lists", group: "Cue lists", label: "DMX lists" },
-    { href: "/builder/wled-preset-lists/", id: "wled-preset-lists", group: "Cue lists", label: "WLED lists" },
-    { href: "/builder/scenes/", id: "scenes", group: "Show", label: "Scenes" },
+    { href: "/builder/gigbar2/", id: "gigbar2", group: "01 Devices", label: "GigBAR 2" },
+    { href: "/builder/keobin/", id: "keobin", group: "01 Devices", label: "Keobin" },
+    { href: "/builder/dmx-presets/", id: "dmx-presets", group: "02 Looks", label: "Pair" },
+    { href: "/builder/dmx-preset-lists/", id: "dmx-preset-lists", group: "03 Cue lists", label: "DMX lists" },
+    { href: "/builder/wled-preset-lists/", id: "wled-preset-lists", group: "03 Cue lists", label: "WLED lists" },
+    { href: "/builder/scenes/", id: "scenes", group: "04 Show", label: "Scenes" },
   ];
 
   function topLinks(mode) {
@@ -46,7 +46,10 @@
     var bar = document.createElement("header");
     bar.className = "topbar";
     bar.innerHTML =
-      '<a class="brand" href="/"><h1>Lights</h1></a>' +
+      '<a class="brand" href="/">' +
+      '<span class="brand-mark" aria-hidden="true"></span>' +
+      "<h1>Lights</h1>" +
+      "</a>" +
       (extra || "") +
       "<nav>" +
       topLinks(mode) +
@@ -66,7 +69,12 @@
     var nav = document.createElement("nav");
     nav.className = "builder-nav";
     var html = "";
+    var lastGroup = "";
     BUILDER_NAV.forEach(function (item) {
+      if (item.group !== lastGroup) {
+        html += '<div class="nav-hint">' + item.group + "</div>";
+        lastGroup = item.group;
+      }
       html +=
         '<a href="' +
         item.href +
@@ -173,10 +181,10 @@
       conn.id = "conn";
       conn.className = "conn";
       conn.textContent = "…";
-      var bar = mountTopbar("performance", conn.outerHTML);
+      mountTopbar("performance", conn.outerHTML);
       var beat = document.getElementById("beat-bar");
       if (beat && beat.parentNode === document.body) {
-        document.body.insertBefore(beat, bar);
+        document.body.insertBefore(beat, document.body.firstChild);
       }
     },
     mountDiag: function () {
