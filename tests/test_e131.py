@@ -335,8 +335,14 @@ def test_close_without_a_socket_sends_nothing() -> None:
     assert not sock.closed
 
 
-def test_config_defaults_to_a_silent_transport() -> None:
-    assert isinstance(build_transport(DMXConfig()), NullTransport)
+def test_config_defaults_to_e131() -> None:
+    transport = build_transport(DMXConfig())
+    assert isinstance(transport, E131Transport)
+    assert transport.name == "e131"
+
+
+def test_null_transport_is_still_selectable() -> None:
+    assert isinstance(build_transport(DMXConfig(transport="null")), NullTransport)
 
 
 def test_config_opts_into_e131_explicitly() -> None:

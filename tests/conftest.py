@@ -22,6 +22,7 @@ from models.Preset import Preset  # noqa: E402
 from models.Scene import Scene  # noqa: E402
 from models.WLED_Preset import WLED_Preset  # noqa: E402
 from models.WLED_Preset_List import WLED_Preset_List  # noqa: E402
+from storage.config import AppConfig, DMXConfig, LedfxConfig  # noqa: E402
 from storage.library import Library  # noqa: E402
 from storage.records import (  # noqa: E402
     DMX_DEVICE_PRESETS,
@@ -55,6 +56,16 @@ def _no_default_audio_device(monkeypatch: pytest.MonkeyPatch) -> None:
     """Keep TestClient from opening a real PortAudio stream when no device is configured."""
     monkeypatch.setattr("server.app._default_input_device_selector", lambda: None)
     reset_logging_for_tests()
+
+
+def silent_config(**overrides) -> AppConfig:
+    """Production defaults are live; tests must not open sACN or call LEDfx."""
+    payload = {
+        "dmx": DMXConfig(transport="null"),
+        "ledfx": LedfxConfig(enabled=False),
+    }
+    payload.update(overrides)
+    return AppConfig(**payload)
 
 
 @pytest.fixture
@@ -166,4 +177,5 @@ __all__ = [
     "CyclingScene",
     "build_cycling_scene_graph",
     "build_minimal_scene_graph",
+    "silent_config",
 ]

@@ -2,9 +2,8 @@
 The thread that puts the universe on the wire, and the transports it can use.
 
 ``SenderThread`` owns the wake loop and knows nothing about packets; a transport owns
-the wire and knows nothing about beats. ``NullTransport`` remains the default so a fresh
-install emits nothing, and ``E131Transport`` is opted into from config once the rig is
-wired (D-013).
+the wire and knows nothing about beats. ``E131Transport`` is the default after hardware
+sign-off. ``NullTransport`` stays for tests and for an explicit ``dmx.transport: "null"``.
 """
 
 from __future__ import annotations
@@ -238,7 +237,7 @@ class E131Transport:
 
 
 def build_transport(dmx: DMXConfig) -> DmxTransport:
-    """Pick a transport from config. Anything but an explicit ``e131`` stays silent."""
+    """Pick a transport from config. ``e131`` is the default; ``null`` silences the wire."""
     if dmx.transport != "e131":
         return NullTransport()
     return E131Transport(

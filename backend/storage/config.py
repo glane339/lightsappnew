@@ -20,8 +20,9 @@ class DMXConfig(BaseModel):
     """
     E1.31 (sACN) output settings.
 
-    ``transport`` gates the wire: the default emits nothing, and ``"e131"`` is set by
-    hand in the user's local ``config.json`` once the rig is wired (D-013). This rig runs
+    ``transport`` defaults to ``"e131"`` after hardware sign-off. Tests force
+    ``"null"`` so pytest never opens a socket. Destination IP still lives only in
+    local ``config.json`` — never in this file. This rig runs
     a **single universe, universe 1**, and sends **unicast** to the switch IP (D-017;
     ``mode`` defaults to ``"unicast"``). Slot count is not configurable — it is
     ``UNIVERSE_SIZE``, fixed by the protocol. The universe box blacks out when packets
@@ -32,7 +33,7 @@ class DMXConfig(BaseModel):
     locally, outside the repository.
     """
 
-    transport: Literal["null", "e131"] = "null"
+    transport: Literal["null", "e131"] = "e131"
     mode: Literal["unicast", "multicast"] = "unicast"
     universe: int = Field(default=1, ge=1, le=63999)
     host: str = "127.0.0.1"
@@ -51,7 +52,7 @@ class DMXConfig(BaseModel):
 
 
 class LedfxConfig(BaseModel):
-    """LEDfx HTTP integration. Nothing calls out unless ``enabled`` is true."""
+    """LEDfx HTTP integration. Enabled by default; set ``enabled`` false to silence it."""
 
     enabled: bool = LEDFX_ENABLED
     base_url: str = LEDFX_BASE_URL

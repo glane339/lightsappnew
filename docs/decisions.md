@@ -25,7 +25,7 @@ Follow-up.
 | [D-010](#d-010-basement-reliability-outranks-generality) | Basement reliability outranks generality | Proposed |
 | [D-011](#d-011-hold-between-scenes-blackout-on-clean-shutdown) | Hold between scenes, blackout on clean shutdown | Accepted |
 | [D-012](#d-012-network-failures-must-not-reach-persistent-state) | Network failures must not reach persistent state | Proposed |
-| [D-013](#d-013-hardware-output-defaults-to-a-null-implementation) | Hardware output defaults to a null implementation | Accepted |
+| [D-013](#d-013-hardware-output-defaults-to-a-null-implementation) | Hardware output defaults to a null implementation | Superseded |
 | [D-014](#d-014-fixtures-become-first-class-persisted-objects) | Fixtures become first-class persisted objects | Accepted |
 | [D-015](#d-015-the-reference-graph-stays-declarative) | The reference graph stays declarative | Accepted |
 | [D-016](#d-016-audio-event-delivery-mechanism) | Audio event delivery mechanism | Accepted |
@@ -218,7 +218,7 @@ documents (rejected: duplicates shared objects).
 ## D-007: E1.31 / sACN is the DMX transport
 
 **Status:** Accepted — supplied project requirement. Framing and `E131Transport`
-exist; default transport is still `NullTransport`.
+exist; default transport is `E131Transport` (`NullTransport` in tests).
 
 **Context.** The rig uses a custom DMX universe box that receives Ethernet traffic
 and drives the physical DMX bus. Options are E1.31/sACN, Art-Net, or a USB DMX
@@ -246,10 +246,9 @@ manual in local `config.json` only —
 **Unicast** to the switch IP ([D-017](#d-017-sacn-unicast-versus-multicast)); `source_name`
 is on `DMXConfig`. Box **blackouts when packets stop**
 ([§6](fixture_and_transport_strategy.md#6-the-custom-universe-box-boundary)).
-[`runtime/e131.py`](../backend/runtime/e131.py) frames packets; `E131Transport` sends
-them when `dmx.transport` is `"e131"`. The default remains `NullTransport`
-([D-013](#d-013-hardware-output-defaults-to-a-null-implementation)). Hardware
-sign-off is still outstanding.
+[`runtime/e131.py`](../backend/runtime/e131.py) frames packets; `E131Transport` is
+the default ([D-013](#d-013-hardware-output-defaults-to-a-null-implementation) superseded
+after hardware sign-off). Switch IP stays in local `config.json` only.
 
 ---
 
@@ -388,24 +387,27 @@ couples transport health to persistent data).
 
 ## D-013: Hardware output defaults to a null implementation
 
-**Status:** Accepted for the DMX path (`NullTransport`); LEDfx still defaults off via
-`LedfxConfig.enabled`.
+**Status:** **Superseded 2026-08-22** after E1.31 and LEDfx hardware sign-off.
+Production defaults are now live: `dmx.transport = "e131"` and `ledfx.enabled = true`.
+Tests inject `silent_config()` (`transport: "null"`, LEDfx off) so pytest never opens a
+socket or calls LEDfx. Destination IPs still do not belong in the repository.
 
-**Context.** Development happens without the rig powered on, and tests must never
-emit anything.
+**Original (accepted until hardware sign-off).** Development happened without the rig
+powered on, and tests must never emit anything.
 
-**Rationale.** Making null the *default* rather than an opt-in means no test run,
-no debugging session, and no accidental import can transmit a packet or an HTTP
-call. Opting in to real output is a deliberate act.
+**Rationale (original).** Making null the *default* rather than an opt-in meant no test
+run, no debugging session, and no accidental import could transmit a packet or an HTTP
+call.
 
-**Consequences.** The DMX path is `DmxTransport` with `NullTransport` as the default.
-`E131Transport` is in the tree and selected only when `dmx.transport` is `"e131"`.
+**Rationale (now).** The box and WLED path are verified. A fresh machine should talk to
+the rig without a second opt-in, aside from writing the switch IP into local
+`config.json`. Tests remain silent by construction.
 
-**Alternatives.** Real-by-default with a test flag (rejected: one forgotten flag
-sends real traffic).
+**Consequences.** `build_transport()` returns `E131Transport` unless `dmx.transport` is
+`"null"`. `LedfxConfig.enabled` defaults true.
 
-**Follow-up.** Real sACN is implemented behind `dmx.transport = "e131"` (WS-4.4); hardware
-sign-off remains. See [project_overview.md § Next steps](project_overview.md#next-steps-priority-order).
+**Follow-up.** Set `dmx.host` (and `bind_address` when the PC has more than one NIC) in
+local config only.
 
 ---
 
@@ -461,8 +463,7 @@ becomes costly.
 Art-Net (rejected: wrong protocol for this hardware).
 
 **Follow-up.** [D-017](decisions.md#d-017-sacn-unicast-versus-multicast) is settled:
-unicast to the switch IP. `dmx.transport` stays `"null"` until deliberate opt-in.
-Checklist in [current_sprint.md § 4.4](current_sprint.md#44-real-sacn-sender--next-hardware-milestone).
+unicast to the switch IP. `dmx.transport` defaults to `"e131"` after hardware sign-off.
 
 ---
 

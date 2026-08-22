@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Callable, List, Optional
 
 import pytest
-from conftest import build_cycling_scene_graph
+from conftest import build_cycling_scene_graph, silent_config
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
@@ -13,7 +13,6 @@ from server.app import create_app
 from server.commands import CommandKind, ShowCommand
 from server.engine import ShowEngine
 from server.routes.diag import SelfTestRequest, selftest
-from storage.config import AppConfig
 from storage.library import Library
 
 WAIT_S = 3.0
@@ -46,7 +45,7 @@ def _seed_scene(data_root: Path) -> str:
 
 
 def _client(data_root: Path) -> TestClient:
-    return TestClient(create_app(AppConfig(), data_root=data_root))
+    return TestClient(create_app(silent_config(), data_root=data_root))
 
 
 def _wait_until(predicate: Callable[[], bool]) -> bool:
@@ -112,7 +111,7 @@ def test_shutdown_is_a_noop_without_a_callback(client: TestClient) -> None:
 
 
 def test_shutdown_invokes_the_server_callback(data_root: Path) -> None:
-    app = create_app(AppConfig(), data_root=data_root)
+    app = create_app(silent_config(), data_root=data_root)
     called: List[bool] = []
     app.state.request_shutdown = lambda: called.append(True)
 
@@ -278,7 +277,7 @@ def test_shutdown_blacks_out_before_closing_the_transport(data_root: Path) -> No
     scene_id = _seed_scene(data_root)
     transport = RecordingTransport()
     engine = ShowEngine(
-        Library.open(data_root, sync_ilda=False), AppConfig(), transport=transport
+        Library.open(data_root, sync_ilda=False), silent_config(), transport=transport
     )
 
     engine.start()

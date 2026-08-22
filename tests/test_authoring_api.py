@@ -6,16 +6,16 @@ from typing import Optional
 
 from fastapi.testclient import TestClient
 
+from conftest import silent_config
 from models.DMX_Device import DMX_Device
 from server.app import create_app
-from storage.config import AppConfig
 from storage.library import Library
 
 WAIT_S = 3.0
 
 
 def _client(data_root: Path) -> TestClient:
-    return TestClient(create_app(AppConfig(), data_root=data_root))
+    return TestClient(create_app(silent_config(), data_root=data_root))
 
 
 def _seed_device(data_root: Path) -> str:

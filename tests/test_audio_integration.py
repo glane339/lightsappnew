@@ -9,12 +9,12 @@ from dataclasses import dataclass
 from types import ModuleType
 
 from audio.beat_source import ManualBeatSource
-from conftest import build_cycling_scene_graph
+from conftest import build_cycling_scene_graph, silent_config
 from fastapi.testclient import TestClient
 from server.beat_timing import DetectedBeatTiming
 from server.commands import CommandKind, ShowCommand
 from server.engine import ShowBusyError, ShowEngine
-from storage.config import AppConfig, AudioConfig
+from storage.config import AudioConfig
 from storage.library import Library
 
 WAIT_S = 3.0
@@ -139,7 +139,7 @@ def test_detected_beat_queue_full_records_a_drop(monkeypatch) -> None:
 
 def test_show_engine_records_processing_and_action_boundaries(data_root, monkeypatch) -> None:
     """A detected beat that changes a cue must retain every observed boundary."""
-    engine = ShowEngine(Library.open(data_root, sync_ilda=False), AppConfig())
+    engine = ShowEngine(Library.open(data_root, sync_ilda=False), silent_config())
 
     class ActionController:
         def on_beat(self, on_action) -> bool:
@@ -174,7 +174,7 @@ def test_show_engine_records_processing_and_action_boundaries(data_root, monkeyp
 
 def test_show_engine_omits_action_timing_when_a_detected_beat_changes_nothing(data_root, monkeypatch) -> None:
     """A beat between cue boundaries must not claim an action timestamp."""
-    engine = ShowEngine(Library.open(data_root, sync_ilda=False), AppConfig())
+    engine = ShowEngine(Library.open(data_root, sync_ilda=False), silent_config())
 
     class IdleController:
         def on_beat(self, on_action) -> bool:
@@ -322,7 +322,7 @@ def test_ambiguous_explicit_selector_fails_closed_without_building_audio_source(
 
     with caplog.at_level(logging.ERROR, logger="server.app"):
         app = create_app(
-            AppConfig(audio=AudioConfig(input_device="Microphone (Realtek(R) Audio)")),
+            silent_config(audio=AudioConfig(input_device="Microphone (Realtek(R) Audio)")),
             data_root=data_root,
         )
 
@@ -334,7 +334,7 @@ def test_create_app_logs_effective_data_root_and_config_path(data_root, caplog) 
     from server.app import create_app
 
     with caplog.at_level(logging.INFO, logger="server.app"):
-        create_app(AppConfig(), data_root=data_root)
+        create_app(silent_config(), data_root=data_root)
 
     assert f"application data root: {data_root}" in caplog.text
     assert f"config path: {data_root / 'config.json'}" in caplog.text
@@ -354,7 +354,7 @@ def test_invalid_configured_audio_selector_leaves_manual_show_beat_available(
     )
 
     app = create_app(
-        AppConfig(audio=AudioConfig(input_device="")),
+        silent_config(audio=AudioConfig(input_device="")),
         data_root=data_root,
     )
 
@@ -388,7 +388,7 @@ def test_audio_engine_starts_on_app_startup(data_root, monkeypatch) -> None:
     )
     _install_fake_audio(monkeypatch, HoldingCapture, runner)
 
-    app = create_app(AppConfig(), data_root=data_root)
+    app = create_app(silent_config(), data_root=data_root)
     assert app.state.audio_source is not None
 
     with TestClient(app):
@@ -431,7 +431,7 @@ def test_detected_beats_advance_look_cycling(data_root, monkeypatch) -> None:
     _install_fake_audio(monkeypatch, GatedCapture, runner)
 
     app = create_app(
-        AppConfig(audio=AudioConfig(input_device="test-mic")),
+        silent_config(audio=AudioConfig(input_device="test-mic")),
         data_root=data_root,
     )
 

@@ -185,10 +185,10 @@ of `%LOCALAPPDATA%\LightsApp` when it is set.
 
 ## Network
 
-**DMX output exists but is off by default.** `dmx.transport` must be set to `"e131"`
-in the local `config.json` before anything binds a socket
-([`backend/runtime/sender.py`](../backend/runtime/sender.py)). LEDfx uses **httpx**
-when `ledfx.enabled` is true ([`backend/ledfx/client.py`](../backend/ledfx/client.py))
+**DMX output is on by default** (`dmx.transport = "e131"`). Set it to `"null"` to
+keep the process silent. Destination IP is still local-only: `dmx.host` in
+`config.json` ([`backend/runtime/sender.py`](../backend/runtime/sender.py)). LEDfx uses **httpx**
+when `ledfx.enabled` is true (the default) ([`backend/ledfx/client.py`](../backend/ledfx/client.py))
 and is typically localhost, so it needs no firewall rule.
 
 Once `dmx.transport = "e131"` ([roadmap phase 4](roadmap.md#phase-4--reliable-dmx-universe-state-and-e131-transport)):
@@ -287,7 +287,7 @@ required to develop against the current codebase:
 
 | | Development | Production (basement) |
 | --- | --- | --- |
-| DMX sender | `NullTransport` (default) | `E131Transport` when `dmx.transport` is `"e131"` |
+| DMX sender | `E131Transport` (default) | `NullTransport` when `dmx.transport` is `"null"` (tests) |
 | LEDfx client | Off unless `ledfx.enabled` | Real client against the LEDfx instance |
 | Audio | Live capture if a device is usable; else manual tap | Same; WASAPI loopback still a raw device name |
 | Laser | Disabled, unimplemented | Disabled until [the prerequisites](laser_and_haze_safety.md#4-what-must-exist-before-output-is-enabled) are met |
@@ -304,8 +304,7 @@ Real output is always the opt-in — see
 - **Any laser output.** Not unsupported by omission — deliberately excluded.
 - **Multi-user or concurrent operators.** Single-operator by design.
 - **Remote or internet access.** The operator server binds `0.0.0.0:8800` on a
-  trusted LAN, with no auth. An E1.31 socket opens only when `dmx.transport` is
-  `"e131"`.
+  trusted LAN, with no auth. An E1.31 socket opens unless `dmx.transport` is `"null"`.
 - **Non-Windows deployment.** Not blocked by the code, but untested and not a target.
 - **Multi-universe DMX.** `DMX_Device.universe` is stored, but `Active_DMX_Channels` is
   still a single 512-value list and the runtime rejects any other universe.
