@@ -41,8 +41,25 @@ class FakeCapture:
         self.closed = True
         self._closed.set()
 
+    def prime(self, timeout: float | None = None) -> None:
+        pass
+
     def wait_closed(self, timeout_s: float = WAIT_S) -> bool:
         return self._closed.wait(timeout_s)
+
+
+class FakeAudioEngineConfig:
+    def __init__(self, *, detector: str) -> None:
+        self.detector = detector
+
+
+class FakeAudioEngine:
+    def __init__(self, config: FakeAudioEngineConfig) -> None:
+        self.config = config
+
+
+class FakeAudioSourceStartupError(Exception):
+    pass
 
 
 def _wait_until(predicate: Callable[[], bool]) -> bool:
@@ -55,15 +72,48 @@ def _wait_until(predicate: Callable[[], bool]) -> bool:
 
 
 def _install_fake_audio(
-    monkeypatch: object, source_cls: type, runner: Callable[[object, object], Iterator[object]]
+    monkeypatch: object,
+    source_cls: type,
+    runner: Callable[[object, object], Iterator[object]],
+    *,
+    engine_cls: type = FakeAudioEngine,
+    config_cls: type = FakeAudioEngineConfig,
 ) -> None:
     audio_engine = ModuleType("lights_audio_engine")
-    audio_engine.AudioEngine = object
+    audio_engine.AudioEngine = engine_cls
+    audio_engine.AudioEngineConfig = config_cls
     capture = ModuleType("lights_audio_engine.capture")
     capture.SoundDeviceAudioSource = source_cls
     capture.run_engine = runner
+    capture.AudioSourceStartupError = FakeAudioSourceStartupError
     monkeypatch.setitem(sys.modules, "lights_audio_engine", audio_engine)
     monkeypatch.setitem(sys.modules, "lights_audio_engine.capture", capture)
+
+
+def test_audio_source_constructs_engine_with_aubio_detector(monkeypatch) -> None:
+    """The live app must select Aubio while the package retains other detectors."""
+    from server.app import _build_audio_source
+
+    class RecordingConfig:
+        def __init__(self, *, detector: str) -> None:
+            self.detector = detector
+
+    class RecordingEngine:
+        def __init__(self, config: RecordingConfig) -> None:
+            self.config = config
+
+    _install_fake_audio(
+        monkeypatch,
+        FakeCapture,
+        lambda _source, _engine: iter(()),
+        engine_cls=RecordingEngine,
+        config_cls=RecordingConfig,
+    )
+
+    audio_source = _build_audio_source("test-mic")
+
+    assert audio_source is not None
+    assert audio_source.adapter._engine.config.detector == "aubio"
 
 
 def _install_fake_sounddevice(
@@ -366,13 +416,30 @@ def test_invalid_configured_audio_selector_leaves_manual_show_beat_available(
     assert response.json()["accepted"] is True
 
 
-def test_audio_engine_starts_on_app_startup(data_root, monkeypatch) -> None:
+def test_audio_engine_primes_on_lifespan_thread_before_starting_worker(data_root, monkeypatch) -> None:
     from server.app import create_app
 
-    class HoldingCapture(FakeCapture):
-        pass
+    captures: list[PrimedCapture] = []
+
+    class PrimedCapture(FakeCapture):
+        def __init__(self, device: object) -> None:
+            super().__init__(device)
+            self.prime_thread: int | None = None
+            self.prime_timeout: float | None = None
+            self.stream_calls = 0
+            captures.append(self)
+
+        def prime(self, timeout: float | None = None) -> None:
+            self.prime_thread = threading.get_ident()
+            self.prime_timeout = timeout
+
+        def stream(self) -> Iterator[object]:
+            self.stream_calls += 1
+            yield object()
 
     def runner(source: FakeCapture, _engine: object) -> Iterator[FakeResult]:
+        assert source.prime_timeout is not None
+        assert source.prime_timeout > 0
         source.wait_closed()
         yield from ()
 
@@ -386,15 +453,58 @@ def test_audio_engine_starts_on_app_startup(data_root, monkeypatch) -> None:
         },
         query_hostapis=lambda index: {"name": "Test host API"},
     )
-    _install_fake_audio(monkeypatch, HoldingCapture, runner)
+    _install_fake_audio(monkeypatch, PrimedCapture, runner)
 
     app = create_app(silent_config(), data_root=data_root)
     assert app.state.audio_source is not None
+    lifespan_threads: list[int] = []
+    original_start = app.state.engine.start
+
+    def record_lifespan_thread() -> None:
+        lifespan_threads.append(threading.get_ident())
+        original_start()
+
+    monkeypatch.setattr(app.state.engine, "start", record_lifespan_thread)
 
     with TestClient(app):
         assert app.state.audio_source.running is True
+        capture = captures[0]
+        assert capture.prime_timeout is not None
+        assert capture.prime_timeout > 0
+        assert capture.prime_thread == lifespan_threads[0]
+        assert capture.stream_calls == 0
 
     assert app.state.audio_source.running is False
+
+
+def test_audio_startup_error_leaves_show_server_available(data_root, monkeypatch, caplog) -> None:
+    from server.app import create_app
+
+    class FailingCapture(FakeCapture):
+        def prime(self, timeout: float | None = None) -> None:
+            raise FakeAudioSourceStartupError(f"no capture item within {timeout} seconds")
+
+    monkeypatch.setattr("server.app._default_input_device_selector", lambda: 4)
+    _install_fake_sounddevice(
+        monkeypatch,
+        query_devices=lambda selector, kind: {
+            "index": 4,
+            "name": "Default microphone",
+            "hostapi": 1,
+        },
+        query_hostapis=lambda index: {"name": "Test host API"},
+    )
+    _install_fake_audio(monkeypatch, FailingCapture, lambda _source, _engine: iter(()))
+
+    app = create_app(silent_config(), data_root=data_root)
+
+    with caplog.at_level(logging.ERROR, logger="server.app"), TestClient(app) as client:
+        response = client.post("/api/show/beat")
+        assert response.status_code == 200
+        assert response.json()["accepted"] is True
+        assert app.state.audio_source.running is False
+
+    assert "live audio startup failed" in caplog.text
 
 
 def test_detected_beats_advance_look_cycling(data_root, monkeypatch) -> None:

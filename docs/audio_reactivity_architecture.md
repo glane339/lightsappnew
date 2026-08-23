@@ -5,7 +5,7 @@
 
 > **Status: live capture is wired into look cycling.** Detection lives in a separate
 > library, [`lights-audio-engine`](https://github.com/glane339/lights-audio-engine)
-> (pinned in `requirements.txt` at `1560d85`). This repo owns the
+> (pinned in `requirements.txt` at `55530e40a5996e3c895212b9f32324032cf2810e`). This repo owns the
 > [`BeatSource`](../backend/audio/beat_source.py) protocol, the
 > [`AudioEngineBeatSource`](../backend/audio/audio_engine_source.py) adapter, and the
 > show-queue delivery that advances cue lists. `ManualBeatSource` remains the test
@@ -24,8 +24,10 @@ those beats.
 
 On app start, [`create_app`](../backend/server/app.py) resolves a capture selector and,
 if one is usable, constructs `AudioEngineBeatSource`, subscribes it to
-`ShowCommand(BEAT)`, and starts the worker in lifespan (after the show engine, before
-serving). Stop order is the reverse.
+`ShowCommand(BEAT)`, and synchronously calls `SoundDeviceAudioSource.prime()` before
+starting the analysis worker. Priming opens the stream on the lifespan/caller thread
+with a finite timeout; the upstream source retains its first item and returns it once
+to the worker. Stop order is the reverse.
 
 Selector rules:
 
@@ -49,10 +51,13 @@ class BeatSource(Protocol):
     def stop(self) -> None: ...
 ```
 
-The adapter publishes from one dedicated worker. Capture is a blocking
-`InputStream.read` inside `lights_audio_engine.capture`, not a PortAudio callback.
-Each `AudioAnalysisResult.beat_events` item becomes one subscriber call, which the
-app factory turns into `ShowEngine.submit(ShowCommand(BEAT))` via `put_nowait`
+The adapter publishes from one dedicated worker. Capture is callback-based:
+`SoundDeviceAudioSource` receives PortAudio callback blocks in a bounded FIFO, then
+its blocking iterator assembles them for analysis. `prime()` retains the first
+assembled item for the analysis worker, preserving the ASIO stream-opening/consumer
+separation without a downstream wrapper. Each `AudioAnalysisResult.beat_events` item
+becomes one subscriber call, which the app factory turns into
+`ShowEngine.submit(ShowCommand(BEAT))` via `put_nowait`
 ([D-016](decisions.md#d-016-audio-event-delivery-mechanism)). Lighting never runs on
 the capture thread. A full show queue drops the beat and logs a warning.
 
@@ -198,7 +203,7 @@ physical-event-to-light budget.
 | Condition | Required behaviour | Current |
 | --- | --- | --- |
 | No usable input device | Start cleanly with the audio path disabled; the show still runs manually. Do not crash. | **Met** — blank selector, failed import, or missing default leaves `audio_source` as `None`. Unset config tries the PortAudio default rather than disabling. |
-| Configured device missing at startup | Surface a clear error naming the device; do not fall back silently to a different one. | **Not met** — open happens inside the capture iterator on the worker; a bad device becomes a discontinuity and the worker exits. |
+| Configured device missing, busy, or not producing callbacks at startup | Surface a clear error naming the device; do not fall back silently to a different one. The show must still start. | **Met** — `prime(timeout=5.0)` bounds first-callback wait; `AudioSourceStartupError` is logged and disables live audio while the show starts. Stream opening occurs on the lifespan/caller thread, never the analysis worker. |
 | Device disappears mid-show | Stop emitting beats, set `is_silent`, keep the process alive, surface the failure. Lights hold their last look. | **Partial** — beats stop and looks hold; no `is_silent` bit and no named failure on `/api/status` or Performance. |
 | Genuine silence | Emit no beats. Do not free-run. See [show_control_architecture.md](show_control_architecture.md#8-behaviour-when-beats-are-not-detected). | **Met** for sequencing. Silence and dead capture still look identical to the operator. |
 | Analysis exception | Must not kill the show thread or the process. | **Met** — adapter catches worker and subscriber exceptions. |

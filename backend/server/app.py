@@ -11,10 +11,11 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator, Callable, Iterable, Mapping
 from contextlib import asynccontextmanager
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
+from typing import Protocol, cast
 
 from audio.audio_engine_source import AudioEngineBeatSource
 from authoring.service import AuthoringService
@@ -42,6 +43,19 @@ FRONTEND_DIR = Path(__file__).resolve().parents[2] / "frontend"
 # Bounded, so a client that stops reading cannot grow the queue without limit. State is
 # absolute rather than incremental, so a dropped event costs nothing but a stale readout.
 EVENT_QUEUE_MAX = 256
+# Keep lifespan bounded when a live device opens but never supplies its first capture item.
+LIVE_AUDIO_STARTUP_TIMEOUT_S = 5.0
+
+
+class _LiveAudioSource(Protocol):
+    def prime(self, *, timeout: float) -> None: ...
+
+
+@dataclass(frozen=True)
+class _LiveAudio:
+    source: _LiveAudioSource
+    adapter: AudioEngineBeatSource
+    startup_error: type[Exception]
 
 
 def _submit_detected_beat(
@@ -145,12 +159,16 @@ def _resolve_input_device(configured: str | None) -> int | None:
     return index
 
 
-def _build_audio_source(input_device: int | str) -> AudioEngineBeatSource | None:
+def _build_audio_source(input_device: int | str) -> _LiveAudio | None:
     """Create the optional live source without importing hardware support at app startup."""
 
     try:
-        from lights_audio_engine import AudioEngine
-        from lights_audio_engine.capture import SoundDeviceAudioSource, run_engine
+        from lights_audio_engine import AudioEngine, AudioEngineConfig
+        from lights_audio_engine.capture import (
+            AudioSourceStartupError,
+            SoundDeviceAudioSource,
+            run_engine,
+        )
     except ImportError:
         logger.exception("live audio is configured but lights-audio-engine is unavailable")
         return None
@@ -159,10 +177,14 @@ def _build_audio_source(input_device: int | str) -> AudioEngineBeatSource | None
     except ValueError as exc:
         logger.error("live detected audio disabled: invalid input device selector: %s", exc)
         return None
-    return AudioEngineBeatSource(
-        source,
-        AudioEngine(),
-        runner=run_engine,
+    return _LiveAudio(
+        source=source,
+        adapter=AudioEngineBeatSource(
+            source,
+            AudioEngine(AudioEngineConfig(detector="aubio")),
+            runner=cast(Callable[[object, object], Iterable[object]], run_engine),
+        ),
+        startup_error=AudioSourceStartupError,
     )
 
 
@@ -183,7 +205,8 @@ def create_app(
     authoring = AuthoringService(library)
     engine = ShowEngine(library, app_config, authoring=authoring)
     audio_selector = _resolve_input_device(app_config.audio.input_device)
-    audio_source = _build_audio_source(audio_selector) if audio_selector is not None else None
+    live_audio = _build_audio_source(audio_selector) if audio_selector is not None else None
+    audio_source = live_audio.adapter if live_audio is not None else None
     if audio_source is not None:
         audio_source.subscribe(lambda timing: _submit_detected_beat(engine, timing))
     events: asyncio.Queue[ShowEvent] = asyncio.Queue(maxsize=EVENT_QUEUE_MAX)
@@ -194,9 +217,15 @@ def create_app(
         # events into it from three other threads.
         engine.bind_loop(asyncio.get_running_loop(), events)
         engine.start()
-        if audio_source is not None:
-            audio_source.start()
-            logger.info("audio engine started")
+        if live_audio is not None:
+            try:
+                # Native stream activation must remain on the lifespan/caller thread for ASIO.
+                live_audio.source.prime(timeout=LIVE_AUDIO_STARTUP_TIMEOUT_S)
+            except live_audio.startup_error:
+                logger.exception("live audio startup failed; continuing with audio unavailable")
+            else:
+                live_audio.adapter.start()
+                logger.info("audio engine started")
         else:
             logger.info("audio engine not started: no usable input device")
         logger.info("show engine started")
