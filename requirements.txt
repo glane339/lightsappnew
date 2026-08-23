@@ -1,6 +1,6 @@
 fastapi==0.141.1
 httpx==0.28.1
-lights-audio-engine[probe] @ git+https://github.com/glane339/lights-audio-engine.git@daae73fc5c34e3e3ccf299e426dafcf0c0465efd
+lights-audio-engine[probe,aubio] @ git+https://github.com/glane339/lights-audio-engine.git@55530e40a5996e3c895212b9f32324032cf2810e
 platformdirs==4.11.0
 pydantic==2.13.4
 pytest==9.1.1
