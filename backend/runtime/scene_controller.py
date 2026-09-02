@@ -54,6 +54,20 @@ class SceneController:
         a silent passage still produces light. Resolution happens once: the sequencers
         get snapshots of the cue lists, not live library references.
         """
+        self._activate_resolved(scene_id)
+
+    def refresh_active(self) -> None:
+        """
+        Re-resolve cue lists from the library and re-apply cue 0.
+
+        Needed after editing cue lists or lighting presets while a scene stays selected:
+        sequencers otherwise keep the snapshots taken at the original activation.
+        """
+        if self._scene_id is None:
+            return
+        self._activate_resolved(self._scene_id)
+
+    def _activate_resolved(self, scene_id: str) -> None:
         dmx_entries, dmx_beats, wled_entries, wled_beats = self._resolve(scene_id)
 
         # Built before anything is swapped in, so a bad scene leaves the previous one

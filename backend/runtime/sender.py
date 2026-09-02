@@ -32,9 +32,34 @@ logger = logging.getLogger(__name__)
 # the local segment. Raising this would leak show traffic onto the rest of the network.
 MULTICAST_TTL = 1
 
-# Send failures repeat at the keepalive rate, so every one of them must not reach the
-# log. The first is always reported; after that only every so often.
+# Send failures on a tight loop would spam the log. The first is always reported;
+# after that only every so often.
 _FAILURE_LOG_INTERVAL = 500
+
+# Keobin light bar is patched at DMX 24 (18 channels). Magic ball uses fixture ch 7–13.
+_KEOBIN_DMX_START = 24
+_KEOBIN_CHANNEL_COUNT = 18
+_KEOBIN_MAGIC_BALL_OFFSET = 6  # fixture ch 7 → universe ch 30
+_KEOBIN_MAGIC_BALL_COUNT = 7
+
+_last_debug_keobin: tuple[int, ...] | None = None
+
+
+def _debug_print_frame(channels: Sequence[int], *, changed: bool = True) -> None:
+    """Stdout trace when Keobin channels change (temporary rig debug)."""
+    global _last_debug_keobin
+    keobin = tuple(
+        channels[_KEOBIN_DMX_START - 1 : _KEOBIN_DMX_START - 1 + _KEOBIN_CHANNEL_COUNT]
+    )
+    ball = keobin[_KEOBIN_MAGIC_BALL_OFFSET : _KEOBIN_MAGIC_BALL_OFFSET + _KEOBIN_MAGIC_BALL_COUNT]
+    motors = keobin[5]  # fixture ch6 — laser motors
+    if keobin == _last_debug_keobin:
+        return
+    _last_debug_keobin = keobin
+    print(
+        f"DMX SEND keobin[24-41]={list(keobin)} motors_ch6={motors} magic_ball[30-36]={list(ball)}",
+        flush=True,
+    )
 
 
 class DmxTransport(Protocol):
@@ -253,11 +278,11 @@ def build_transport(dmx: DMXConfig) -> DmxTransport:
 
 class SenderThread:
     """
-    Send-on-change with a keepalive floor.
+    Send-on-change only.
 
-    ``universe.dirty.wait`` returns the moment a look changes. The timeout re-sends an
-    unchanged universe so a receiver that missed a packet recovers, and so a box that
-    blacks out when packets stop keeps holding the current look.
+    ``universe.dirty.wait`` blocks until a look changes, then puts one frame on the wire.
+    No periodic re-send: this rig's universe box holds the last frame until a new one
+    arrives, and idle keepalives were causing fixture flicker at high refresh rates.
     """
 
     def __init__(
@@ -265,15 +290,11 @@ class SenderThread:
         universe: UniverseState,
         transport: DmxTransport,
         *,
-        keepalive_s: float,
         stop: threading.Event,
         on_change_sent: Optional[Callable[[], None]] = None,
     ) -> None:
-        if keepalive_s <= 0:
-            raise ValueError("keepalive_s must be positive")
         self._universe = universe
         self._transport = transport
-        self._keepalive_s = keepalive_s
         self._stop = stop
         self._on_change_sent = on_change_sent
         self._thread: Optional[threading.Thread] = None
@@ -291,7 +312,7 @@ class SenderThread:
 
     def stop(self, timeout_s: float = 5.0) -> None:
         self._stop.set()
-        self._universe.dirty.set()  # break the wait rather than letting it run out the keepalive
+        self._universe.dirty.set()  # wake the wait so shutdown does not hang
         thread = self._thread
         if thread is not None:
             thread.join(timeout=timeout_s)
@@ -299,25 +320,21 @@ class SenderThread:
 
     def _run(self) -> None:
         while not self._stop.is_set():
-            changed = self._universe.dirty.wait(timeout=self._keepalive_s)
+            self._universe.dirty.wait()
             if self._stop.is_set():
                 break
 
-            # Only clear after a *change* wake. Clearing after a timeout (F-07) can
-            # swallow a publish that landed between the timeout return and the clear:
-            # the frame still goes out, but the ledger waits for the next change.
-            if changed:
-                self._universe.dirty.clear()
+            self._universe.dirty.clear()
 
             # A transport is contracted not to raise, but this thread dying would freeze
             # the rig with no error anywhere, so the contract is not trusted.
             try:
-                self._transport.send(self._universe.snapshot())
+                frame = self._universe.snapshot()
+                _debug_print_frame(frame)
+                self._transport.send(frame)
             except Exception:
                 self.send_errors += 1
                 logger.exception("sender survived a transport failure")
 
-            # Fired even when the send failed: the commands waiting behind this frame
-            # still need answering, and leaving them queued would grow without bound.
-            if changed and self._on_change_sent is not None:
+            if self._on_change_sent is not None:
                 self._on_change_sent()

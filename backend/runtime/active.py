@@ -63,6 +63,8 @@ class UniverseState:
         elif len(clamped) > UNIVERSE_SIZE:
             clamped = clamped[:UNIVERSE_SIZE]
         with self._lock:
+            if self._channels.channels == clamped:
+                return
             self._channels.channels = clamped
         self.publish()
 

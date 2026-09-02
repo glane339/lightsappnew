@@ -138,8 +138,13 @@ class LedFxClient:
             response = self._http.put("/api/scenes", json=body)
             response.raise_for_status()
             payload = response.json()
-        except (httpx.HTTPError, ValueError) as exc:
+        except httpx.ConnectError as exc:
             self._mark_unreachable(exc)
+            raise LedFxError(f"failed to {action} LEDfx scene {slug!r}: {exc}") from exc
+        except httpx.TimeoutException as exc:
+            # LEDfx can be slow applying a scene while still up; do not flip reachability.
+            raise LedFxError(f"failed to {action} LEDfx scene {slug!r}: {exc}") from exc
+        except (httpx.HTTPError, ValueError) as exc:
             raise LedFxError(f"failed to {action} LEDfx scene {slug!r}: {exc}") from exc
 
         if payload.get("status") != "success":

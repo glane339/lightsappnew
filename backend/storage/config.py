@@ -24,10 +24,9 @@ class DMXConfig(BaseModel):
     ``"null"`` so pytest never opens a socket. Destination IP still lives only in
     local ``config.json`` — never in this file. This rig runs
     a **single universe, universe 1**, and sends **unicast** to the switch IP (D-017;
-    ``mode`` defaults to ``"unicast"``). Slot count is not configurable — it is
-    ``UNIVERSE_SIZE``, fixed by the protocol. The universe box blacks out when packets
-    stop, so ``refresh_hz`` is what holds a look, not just packet-loss insurance
-    (docs/fixture_and_transport_strategy.md §6).
+    ``mode`` defaults to ``"unicast"``).     Slot count is not configurable — it is ``UNIVERSE_SIZE``, fixed by the protocol.
+    The sender transmits on change only; the universe box holds the last frame until
+    the next one arrives (docs/fixture_and_transport_strategy.md §6).
 
     No IP belongs in this file's defaults: ``host`` and ``bind_address`` are filled in
     locally, outside the repository.
@@ -45,10 +44,6 @@ class DMXConfig(BaseModel):
     # because a machine with both Wi-Fi and Ethernet will otherwise pick by route metric,
     # and multicast in particular has to be pinned to the interface the rig is on.
     bind_address: Optional[str] = None
-
-    # A full 512-slot DMX frame tops out near 44 Hz on the physical bus, so a faster
-    # keepalive only adds traffic the gateway has to coalesce (AF-L01, F-15).
-    refresh_hz: int = Field(default=44, ge=1)
 
 
 class LedfxConfig(BaseModel):

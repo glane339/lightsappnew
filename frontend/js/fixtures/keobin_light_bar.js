@@ -31,7 +31,7 @@
         owned: [1],
         defaultMode: "unused",
         modes: [
-          { id: "unused", label: "Not used", channels: ch({ 1: 0 }) },
+          { id: "unused", label: "Not used", channels: ch({ 1: 255 }) },
           { id: "self1", label: "Self-run 1", channels: ch({ 1: 45 }) },
           { id: "self2", label: "Self-run 2", channels: ch({ 1: 75 }) },
           { id: "self3", label: "Self-run 3", channels: ch({ 1: 105 }) },

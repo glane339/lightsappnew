@@ -4,8 +4,6 @@ import threading
 import time
 from typing import List
 
-import pytest
-
 from models.Active_DMX_Channels import UNIVERSE_SIZE
 from runtime.active import UniverseState
 from runtime.sender import NullTransport, SenderThread
@@ -41,10 +39,9 @@ def _wait_for(predicate, timeout_s: float = WAIT_S) -> bool:
     return False
 
 
-def _run_sender(universe: UniverseState, transport, keepalive_s: float = 60.0):
-    """Start a sender on a long keepalive, so any send is change-driven."""
+def _run_sender(universe: UniverseState, transport):
     stop = threading.Event()
-    sender = SenderThread(universe, transport, keepalive_s=keepalive_s, stop=stop)
+    sender = SenderThread(universe, transport, stop=stop)
     sender.start()
     return sender
 
@@ -69,6 +66,14 @@ def test_two_universe_states_do_not_share_dirty_or_count() -> None:
     assert second.publish_count() == 0
 
 
+def test_replace_skips_publish_when_unchanged() -> None:
+    universe = UniverseState()
+    universe.replace([1] * UNIVERSE_SIZE)
+    assert universe.publish_count() == 1
+    universe.replace([1] * UNIVERSE_SIZE)
+    assert universe.publish_count() == 1
+
+
 def test_replace_clamps_and_pads_to_universe_size() -> None:
     universe = UniverseState()
     universe.replace([-3, 300, 12])
@@ -79,7 +84,7 @@ def test_replace_clamps_and_pads_to_universe_size() -> None:
     assert universe.dirty.is_set()
 
 
-def test_sender_sends_on_change_without_waiting_for_the_keepalive() -> None:
+def test_sender_sends_on_change() -> None:
     universe = UniverseState()
     transport = CountingTransport()
     sender = _run_sender(universe, transport)
@@ -102,16 +107,7 @@ def test_sender_is_idle_until_something_changes() -> None:
         sender.stop()
 
 
-def test_keepalive_resends_an_unchanged_universe() -> None:
-    transport = CountingTransport()
-    sender = _run_sender(UniverseState(), transport, keepalive_s=0.02)
-    try:
-        assert _wait_for(lambda: len(transport.frames) >= 3)
-    finally:
-        sender.stop()
-
-
-def test_change_callback_fires_only_for_changes() -> None:
+def test_change_callback_fires_on_send() -> None:
     universe = UniverseState()
     transport = CountingTransport()
     changes: List[int] = []
@@ -119,16 +115,17 @@ def test_change_callback_fires_only_for_changes() -> None:
     sender = SenderThread(
         universe,
         transport,
-        keepalive_s=0.02,
         stop=stop,
         on_change_sent=lambda: changes.append(1),
     )
     sender.start()
     try:
-        assert _wait_for(lambda: len(transport.frames) >= 3)
+        time.sleep(0.05)
+        assert transport.frames == []
         assert changes == []
 
         universe.publish()
+        assert _wait_for(lambda: len(transport.frames) >= 1)
         assert _wait_for(lambda: len(changes) >= 1)
     finally:
         sender.stop()
@@ -152,16 +149,6 @@ def test_null_transport_counts_frames_without_a_socket() -> None:
     assert transport.send_count == 2
     assert transport.last_channels == [4, 5, 6]
     assert transport.name == "null"
-
-
-def test_keepalive_must_be_positive() -> None:
-    with pytest.raises(ValueError, match="must be positive"):
-        SenderThread(
-            UniverseState(),
-            NullTransport(),
-            keepalive_s=0,
-            stop=threading.Event(),
-        )
 
 
 def test_sender_snapshots_under_the_owned_universe() -> None:

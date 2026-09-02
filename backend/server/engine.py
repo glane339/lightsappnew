@@ -107,7 +107,6 @@ class ShowEngine:
         self._sender = SenderThread(
             self._universe,
             self._transport,
-            keepalive_s=1.0 / config.dmx.refresh_hz,
             stop=self._stop,
             on_change_sent=self._on_change_sent,
         )

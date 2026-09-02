@@ -1,0 +1,15 @@
+{
+  "collection": "wled_presets",
+  "items": {
+    "asdfasd": {
+      "id": "asdfasd"
+    },
+    "asfdda": {
+      "id": "asfdda"
+    },
+    "daf": {
+      "id": "daf"
+    }
+  },
+  "schema_version": 4
+}
