@@ -13,5 +13,8 @@ if exist "venv\Scripts\python.exe" (
   exit /b 1
 )
 
-echo Starting Lights on http://127.0.0.1:8800
+REM Must be set before Python starts so PortAudio/sounddevice can enumerate ASIO.
+set "SD_ENABLE_ASIO=1"
+
+echo Starting Lights on http://127.0.0.1:8800 (SD_ENABLE_ASIO=%SD_ENABLE_ASIO%)
 "%PY%" backend\main.py
